@@ -21,5 +21,82 @@
   "pr": null,
   "parent": null,
   "related": [],
-  "spec": null
+  "spec": {
+    "plan": "Today the service exposes three routes and there is no way to ask what every sensor is reporting: a caller must already know a sensor's name and hit GET /sensors/{sensor}/readings one name at a time. After this change, GET /sensors/latest returns a JSON array holding the single newest reading for each sensor that has one, ordered by sensor name, and a sensor with nothing stored is absent rather than present with a null or a zero.\n\nTwo files change. ReadingStore gains `public IReadOnlyList<Reading> Latest()`, which walks `_bySensor.Keys`, takes each sensor's readings through the existing `For(sensor)` accessor, drops any sensor whose list is empty, takes element 0 (the lists are already kept newest-first by `TryAdd`), and orders by `Sensor` with `StringComparer.Ordinal` so the order is deterministic and not culture-dependent. Program.cs gains one `app.MapGet(\"/sensors/latest\", (ReadingStore store) => Results.Ok(store.Latest()));` placed after the existing `/sensors/{sensor}/mean` map and before `app.Run()`.\n\nThree decisions the builder should not re-open. (1) The array elements are serialised `Reading` records, so each carries `sensor`, `at`, `celsius` and `isPlausible` — the same shape GET /sensors/{sensor}/readings already returns. Do not introduce a new DTO record or a projection to an anonymous type; that would be a second way of putting a reading on the wire, and `isPlausible` on the wire is a recorded, deliberate fact of the current API shape, not a bug to fix here. (2) An empty store answers 200 with `[]`, not 204. The 204 convention belongs to `MeanCelsius`, where `null` means \"no number to give\"; a collection route here follows `For`, whose stated rule is that absence yields `[]` and never `null`. (3) `Latest()` must actively skip empty lists rather than assume none exist: `TryAdd` calls `GetOrAdd` before taking the per-sensor lock, so a concurrent reader can observe a freshly created list that has not been appended to yet. Skipping is also the literal wording of the request.\n\nNot in scope, and each a separate work item if wanted: `For` copies its list without taking the lock that `TryAdd` holds while sorting, which is a pre-existing race this change inherits and does not widen; and `tests/Readings.Tests` still has no WebApplicationFactory test, so the new route — like the three existing ones — is covered by running the app and not by `dotnet test`.",
+    "files": [
+      "src/Readings/ReadingStore.cs",
+      "src/Readings/Program.cs",
+      "tests/Readings.Tests/ReadingStoreTests.cs"
+    ],
+    "feature_folders": [
+      "src/Readings",
+      "tests/Readings.Tests"
+    ],
+    "acceptance_checks": [
+      "With the app running under the sandbox's run command (which seeds sensor `boiler` at 25, 15 and 5 minutes ago with 18.5, 20.0 and 21.5C), `curl -i http://127.0.0.1:5080/sensors/latest` returns 200 and a JSON array of exactly one object, whose `sensor` is \"boiler\", whose `celsius` is 21.5 and whose `at` is the 5-minutes-ago timestamp — the newest of the three readings, not the oldest and not an average of them.",
+      "POST a plausible reading for a sensor named `attic` and another for `cellar` (timestamp now, any celsius between -80 and 80), posting `cellar` first, then `GET /sensors/latest`: the response holds three objects in the order attic, boiler, cellar — alphabetical by sensor name, not the order they were posted in.",
+      "POST a second reading for `boiler` dated now with celsius 22.5, then `GET /sensors/latest`: there is still exactly one object whose `sensor` is \"boiler\", and its `celsius` is 22.5 and its `at` is the just-posted timestamp. Adding a reading to a sensor already in the list replaces that sensor's entry rather than adding a second one.",
+      "POST `{\"sensor\":\"shed\",\"at\":\"<now>\",\"celsius\":-127}` and get the usual 400; then `GET /sensors/latest` and confirm no object in the array has `sensor` \"shed\". A sensor whose only report was refused has no reading, so it does not appear.",
+      "Start the app with the runbook's bare run command, `dotnet run --project src/Readings/Readings.csproj --no-build` with ASPNETCORE_URLS=http://127.0.0.1:5080, which seeds nothing, and `curl -i http://127.0.0.1:5080/sensors/latest`: the status is 200 and the body is `[]`. Not 204, not 404, not a null body.",
+      "With readings present, `curl -o /dev/null -w '%{http_code}' http://127.0.0.1:5080/sensors/boiler/readings` and `curl -o /dev/null -w '%{http_code}' 'http://127.0.0.1:5080/sensors/boiler/mean?minutes=60'` both return 200, and `dotnet test --no-build` passes. The new literal `/sensors/latest` route does not shadow the existing `/sensors/{sensor}/...` routes."
+    ],
+    "tests_added": [
+      "`LatestIsTheNewestReadingPerSensor` in tests/Readings.Tests/ReadingStoreTests.cs — store two readings for `boiler` (30 minutes ago at 18C, 2 minutes ago at 22C) and one for `attic`, then assert `Latest()` has 2 entries and that the `boiler` entry's `At` is the 2-minutes-ago one and its `Celsius` is 22. Fails if the method returns every reading, or the oldest per sensor.",
+      "`LatestIsOrderedBySensorName` in tests/Readings.Tests/ReadingStoreTests.cs — store readings for `cellar`, `attic` and `boiler` in that order, then assert the sensor names come back as attic, boiler, cellar. Fails if the order is insertion order or dictionary order.",
+      "`LatestOmitsASensorWithNothingStored` in tests/Readings.Tests/ReadingStoreTests.cs — `TryAdd` a -127C reading for `shed`, which is refused, then assert `Latest()` is empty. Carries a comment stating the consequence: a sensor that only ever reported -127 has no reading, so inventing an entry for it would report a failed sensor as a working one."
+    ],
+    "tests_changed": [
+      "tests/Readings.Tests/ReadingStoreTests.cs"
+    ],
+    "research": [
+      {
+        "claim": "The three new tests need readings for more than one sensor, but the existing private helper `At(int minutesAgo, double celsius = 20)` hardcodes the sensor name \"boiler\". Add an overload `At(string sensor, int minutesAgo, double celsius = 20)` and make the existing one-argument helper delegate to it, so no existing [Fact] body changes. This is the only modification to existing lines in the file; everything else is addition. The file is declared in tests_changed because the policy check fails a PR that edits an existing test file not listed there.",
+        "source": "tests/Readings.Tests/ReadingStoreTests.cs:9"
+      },
+      {
+        "claim": "`TryAdd` sorts each per-sensor list newest-first on every insert (`list.Sort(static (a, b) => b.At.CompareTo(a.At))`), so the newest reading for a sensor is always element 0. `Latest()` does not need its own Max or OrderByDescending over timestamps — taking `[0]` is correct and is the behaviour the existing `ReturnsNewestFirst` test already guards.",
+        "source": "src/Readings/ReadingStore.cs:30"
+      },
+      {
+        "claim": "`TryAdd` calls `_bySensor.GetOrAdd(reading.Sensor, static _ => [])` outside the `lock (list)` and only appends inside it, so a reader can observe a sensor key whose list is momentarily empty. `Latest()` therefore filters on `Count > 0` rather than assuming every key has a reading. The plausibility check runs before `GetOrAdd`, so a refused reading never creates a key at all — both paths are covered by the same filter.",
+        "source": "src/Readings/ReadingStore.cs:21"
+      },
+      {
+        "claim": "The repo's stated pattern for returning a collection is `IReadOnlyList<T>` built as a copy with a collection expression (`[.. ...]`), never the internal `List<T>`, and an absent sensor yields `[]` and not `null`. `Latest()` follows it, and the route answers 200 with `[]` on an empty store rather than the 204 that `/sensors/{sensor}/mean` uses — 204 there means \"no number\", which is a different decision from \"no rows\".",
+        "source": ".factory/definition/context/fundamentals.md:27"
+      },
+      {
+        "claim": "A new HTTP route goes inline in Program.cs as an `app.Map*` call with services resolved as lambda parameters. There is no controller, no IEndpointRouteBuilder extension method and no routing file to add to, so the whole HTTP change is the one MapGet line.",
+        "source": ".factory/definition/context/feature-map.md:50"
+      },
+      {
+        "claim": "`Reading.IsPlausible` is a public property of the record and System.Text.Json serialises it, so responses already carry `isPlausible`. The context records this as a deliberate exception: it is a fact of the current API shape, and removing it from the wire is a product decision to take on its own, not something to fold into this change. Returning `Reading` from /sensors/latest keeps the element shape identical to GET /sensors/{sensor}/readings.",
+        "source": ".factory/definition/context/fundamentals.md:101"
+      },
+      {
+        "claim": "Ordering by sensor name uses `StringComparer.Ordinal` explicitly rather than the default comparer, which is culture-sensitive. With TreatWarningsAsErrors, EnforceCodeStyleInBuild and AnalysisLevel=latest-recommended all on, an explicit ordinal comparer is both deterministic for the acceptance check and safe against the string-comparison analyzers.",
+        "source": "src/Readings/Readings.csproj"
+      },
+      {
+        "claim": "Built the exact proposed implementation (the Latest() method, the MapGet line, the test overload and the three new [Fact]s) in a scratch copy of the repo: `dotnet build --no-restore` succeeded with 0 warnings and 0 errors under TreatWarningsAsErrors, `dotnet test --no-build` ran 9 passed / 0 failed, and `dotnet format --verify-no-changes` exited 0. The scratch copy has been deleted; the working tree is unchanged.",
+        "source": "ran: cp -r src tests Readings.sln .editorconfig /tmp/gh-aw/agent/probe && cd /tmp/gh-aw/agent/probe && dotnet restore && dotnet build --no-restore && dotnet test --no-build && dotnet format --verify-no-changes"
+      },
+      {
+        "claim": "Drove the route over real HTTP in that scratch copy on port 5099. An empty store returned `200 []`. After posting readings for cellar, boiler, attic (plus a newer boiler one) and a refused -127 for shed, GET /sensors/latest returned exactly `[{\"sensor\":\"attic\",...,\"celsius\":21.5,\"isPlausible\":true},{\"sensor\":\"boiler\",...,\"celsius\":22.5,...},{\"sensor\":\"cellar\",...,\"celsius\":18.5,...}]` — one entry per sensor, newest value each, alphabetical, no shed. GET /sensors/boiler/readings and /sensors/boiler/mean?minutes=60 both still returned 200, and GET /sensors/latest/readings still resolved with sensor=\"latest\", confirming the literal two-segment route does not shadow the three-segment parameterised ones.",
+        "source": "ran: ASPNETCORE_URLS=http://127.0.0.1:5099 dotnet run --project src/Readings/Readings.csproj --no-build, then curl against /readings, /sensors/latest, /sensors/boiler/readings and /sensors/boiler/mean?minutes=60"
+      },
+      {
+        "claim": "The sandbox exercises the HTTP surface end to end against a running app with curl and can screenshot a JSON route, so every acceptance check above is runnable here. It does not exercise concurrency or persistence, and there is no WebApplicationFactory test project — which is why the route's checks are HTTP-level acceptance checks and the unit tests target ReadingStore.Latest() rather than the route.",
+        "source": ".factory/sandbox/manifest.json:67"
+      },
+      {
+        "claim": "The README documents the build and test commands and the product's two honesty decisions, but does not enumerate the HTTP routes, so adding a route needs no README edit. No markdown file is planned.",
+        "source": "README.md"
+      },
+      {
+        "claim": "practices.md holds no practices yet (the table is empty), and policy.yaml's product_work pipeline may change `code` and `tests`. None of the three files in this plan is a protected path (.github/workflows, .factory/bin, policy.yaml, .factory/sandbox), so nothing here needs trusted human approval.",
+        "source": ".factory/definition/policy.yaml:52"
+      }
+    ]
+  }
 }
