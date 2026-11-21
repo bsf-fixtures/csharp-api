@@ -5,11 +5,24 @@
   "commands": {
     "install": "dotnet restore",
     "build": "dotnet build --no-restore",
-    "test": "mkdir -p \"${VSTEST_ARTIFACTS_DIRECTORY:-/tmp/vstest-artifacts}\" \"${TMPDIR:-/tmp}/readings-test-results\" && rm -f \"${TMPDIR:-/tmp}/readings-test-results/results.trx\" && dotnet vstest tests/Readings.Tests/bin/Debug/net9.0/Readings.Tests.dll --ResultsDirectory:\"${TMPDIR:-/tmp}/readings-test-results\" --logger:\"trx;LogFileName=results.trx\" --logger:\"console;verbosity=normal\" && grep -c \"<UnitTestResult \" \"${TMPDIR:-/tmp}/readings-test-results/results.trx\"",
-    "run": "(until curl -sf -o /dev/null http://127.0.0.1:5080/sensors/boiler/readings; do sleep 1; done; for s in 25:18.5 15:20.0 5:21.5; do curl -sS -X POST http://127.0.0.1:5080/readings -H 'Content-Type: application/json' -d \"{\\\"sensor\\\":\\\"boiler\\\",\\\"at\\\":\\\"$(date -u -d \"-${s%%:*} minutes\" +%Y-%m-%dT%H:%M:%SZ)\\\",\\\"celsius\\\":${s##*:}}\" >/dev/null; done) & exec dotnet run --project src/Readings/Readings.csproj --no-build",
-    "seed": "for s in 25:18.5 15:20.0 5:21.5; do curl -sS -X POST \"$ASPNETCORE_URLS/readings\" -H 'Content-Type: application/json' -d \"{\\\"sensor\\\":\\\"boiler\\\",\\\"at\\\":\\\"$(date -u -d \"-${s%%:*} minutes\" +%Y-%m-%dT%H:%M:%SZ)\\\",\\\"celsius\\\":${s##*:}}\"; echo; done"
+    "test": "mkdir -p \"${VSTEST_ARTIFACTS_DIRECTORY:-/tmp/vstest-artifacts}\" \"${TMPDIR:-/tmp}/readings-test-results\" && chmod 700 \"${VSTEST_ARTIFACTS_DIRECTORY:-/tmp/vstest-artifacts}\" || true; rm -f \"${TMPDIR:-/tmp}/readings-test-results/results.trx\" && A=$(ls tests/*/bin/Debug/net*/*.Tests.dll 2>/dev/null) && [ -n \"$A\" ] && dotnet vstest $A --ResultsDirectory:\"${TMPDIR:-/tmp}/readings-test-results\" --logger:\"trx;LogFileName=results.trx\" --logger:\"console;verbosity=normal\" && grep -c \"<UnitTestResult \" \"${TMPDIR:-/tmp}/readings-test-results/results.trx\" && ! grep -q 'outcome=\"Failed\"' \"${TMPDIR:-/tmp}/readings-test-results/results.trx\"",
+    "coverage": "mkdir -p \"${VSTEST_ARTIFACTS_DIRECTORY:-/tmp/vstest-artifacts}\" && chmod 700 \"${VSTEST_ARTIFACTS_DIRECTORY:-/tmp/vstest-artifacts}\" || true; rm -rf \"${TMPDIR:-/tmp}/readings-coverage\" /tmp/bsf-coverage && mkdir -p \"${TMPDIR:-/tmp}/readings-coverage\" /tmp/bsf-coverage && CC=$(ls -d \"$HOME\"/.nuget/packages/microsoft.codecoverage/*/build/netstandard2.0 2>/dev/null | tail -1) && [ -n \"$CC\" ] && A=$(ls tests/*/bin/Debug/net*/*.Tests.dll 2>/dev/null) && [ -n \"$A\" ] && dotnet vstest $A --TestAdapterPath:\"$CC\" --ResultsDirectory:\"${TMPDIR:-/tmp}/readings-coverage\" --collect:\"Code Coverage;Format=Cobertura\" --logger:\"trx;LogFileName=results.trx\" --logger:\"console;verbosity=normal\" && cp \"$(find \"${TMPDIR:-/tmp}/readings-coverage\" -name '*.cobertura.xml' | head -1)\" /tmp/bsf-coverage/cobertura.xml && grep -c \"<UnitTestResult \" \"${TMPDIR:-/tmp}/readings-coverage/results.trx\" && ! grep -q 'outcome=\"Failed\"' \"${TMPDIR:-/tmp}/readings-coverage/results.trx\"",
+    "run": "(until curl -sf -o /dev/null http://127.0.0.1:5080/sensors/boiler/readings; do sleep 1; done; for s in boiler:25:18.5 boiler:15:20.0 boiler:5:21.5 attic:12:11.0 attic:3:12.5; do n=${s%%:*}; r=${s#*:}; m=${r%%:*}; c=${r#*:}; curl -sS -X POST \"http://127.0.0.1:5080/readings\" -H 'Content-Type: application/json' -d \"{\\\"sensor\\\":\\\"$n\\\",\\\"at\\\":\\\"$(date -u -d \"-$m minutes\" +%Y-%m-%dT%H:%M:%SZ)\\\",\\\"celsius\\\":$c}\" >/dev/null; done) & exec dotnet run --project src/Readings/Readings.csproj --no-build",
+    "seed": "for s in boiler:25:18.5 boiler:15:20.0 boiler:5:21.5 attic:12:11.0 attic:3:12.5; do n=${s%%:*}; r=${s#*:}; m=${r%%:*}; c=${r#*:}; curl -sS -X POST \"$ASPNETCORE_URLS/readings\" -H 'Content-Type: application/json' -d \"{\\\"sensor\\\":\\\"$n\\\",\\\"at\\\":\\\"$(date -u -d \"-$m minutes\" +%Y-%m-%dT%H:%M:%SZ)\\\",\\\"celsius\\\":$c}\"; echo; done"
   },
   "app_url": "http://127.0.0.1:5080/sensors/boiler/readings",
+  "coverage_report": {
+    "path": "/tmp/bsf-coverage/cobertura.xml",
+    "format": "cobertura"
+  },
+  "static_checks": [
+    {
+      "name": "dotnet-format",
+      "command": "D=/tmp/bsf-format; rm -rf \"$D\"; mkdir -p \"$D\"; dotnet restore >/dev/null 2>&1; dotnet format --verify-no-changes --no-restore --report \"$D\"; rc=$?; [ -f \"$D/format-report.json\" ] && jq '{version:\"2.1.0\",runs:[{tool:{driver:{name:\"dotnet-format\"}},results:[.[] | .FilePath as $f | .FileChanges[] | {ruleId:.DiagnosticId, level:\"warning\", message:{text:.FormatDescription}, locations:[{physicalLocation:{artifactLocation:{uri:$f}, region:{startLine:.LineNumber, startColumn:.CharNumber}}}]}]}]}' \"$D/format-report.json\" > \"$D/dotnet-format.sarif\"; exit $rc",
+      "sarif": "/tmp/bsf-format/dotnet-format.sarif",
+      "why": "dotnet format is the lint gate this repo already runs in .github/workflows/ci.yml, and it is the one both amendment reports could not run. It is also the only checker here that covers tests/Readings.Tests: that project sets neither TreatWarningsAsErrors nor EnforceCodeStyleInBuild, so the build says nothing about its style, and a block-scoped namespace or mangled whitespace in a test file passes build and tests and is caught by nothing else. dotnet format emits a JSON report rather than SARIF, so jq converts it; the conversion keeps the rule id, the file and the line, which is what the gate counts. The command deliberately writes no SARIF when format wrote no report, so a checker that did not run is reported unavailable rather than as a clean repo."
+    }
+  ],
   "env": [
     {
       "name": "ASPNETCORE_URLS",
@@ -39,7 +52,7 @@
       "name": "VSTEST_ARTIFACTS_DIRECTORY",
       "kind": "self",
       "value": "/tmp/vstest-artifacts",
-      "why": "Added by the amendment. VSTest 18.12.0 (the version in SDK 11) prints 'VSTEST_ARTIFACTS_DIRECTORY environment variable was not found, falling back to a user-private temporary directory. This is most likely caused by an outdated Microsoft.NET.Test.Sdk package reference' on every run here, because the test project pins Microsoft.NET.Test.Sdk 17.12.0. The warning is the last line of test output and it sent the builder looking at the package version rather than at its own container. Naming the directory removes the fallback and the warning; the test command creates it first, because VSTest does not. Toolchain configuration, in the same class as DOTNET_NOLOGO — nothing in src/ or tests/ reads it."
+      "why": "VSTest 18.12.0 (the version in SDK 11) prints 'VSTEST_ARTIFACTS_DIRECTORY environment variable was not found, falling back to a user-private temporary directory. This is most likely caused by an outdated Microsoft.NET.Test.Sdk package reference' on every run here, because the test project pins Microsoft.NET.Test.Sdk 17.12.0. The warning is the last line of test output and it sent the builder looking at the package version rather than at its own container. Naming the directory removes the fallback and the warning; the test and coverage commands create it first, because VSTest does not, and chmod it to 700, because VSTest refuses to save session artifacts into a directory other users can read and says so in another warning. Toolchain configuration, in the same class as DOTNET_NOLOGO — nothing in src/ or tests/ reads it."
     }
   ],
   "services": [],
@@ -52,42 +65,83 @@
     {
       "from": ".github/workflows/ci.yml",
       "what": "actions/setup-dotnet@v4 with dotnet-version: \"9.0.x\"",
-      "why": "That step provisions an SDK on a bare runner; it is CI plumbing, not something the app needs installed. The trial runner already ships .NET SDKs, and a newer SDK builds this repo's net9.0 target fine — verified here against SDK 11.0.100, which produced 0 warnings with TreatWarningsAsErrors on."
+      "why": "That step provisions an SDK on a bare runner; it is CI plumbing, not something the app needs installed. The trial runner already ships .NET SDKs, and a newer SDK builds this repo's net9.0 target fine — verified here against SDK 11.0.100, the newest of the twelve installed, which produced 0 warnings with TreatWarningsAsErrors on. The cost of leaving it out is that SDK selection is unpinned, and that is the common root of every toolchain surprise the roles have reported; pinning it would mean adding a global.json to the repo, which setup does not do."
     },
     {
       "from": ".github/workflows/ci.yml",
       "what": "dotnet test --no-build as the sandbox's test command",
-      "why": "Replaced by the amendment, not dropped as a step: the tests still run, through `dotnet vstest` on the built assembly. The builder reported `dotnet test --no-build` exiting 0 while discovering and running nothing in its agent container — no console output, no trx, no --diag file. It works in both containers checked here (6 passed), so the difference is in the role container and not visible from either of them. The shape of that failure is what matters: a gate that reads only an exit code reports green over zero tests. `dotnet vstest` skips `dotnet test`'s project evaluation entirely and is the one form the builder confirmed working there, and the command asserts a positive result count on top. CI keeps running `dotnet test`; it is checked on a GitHub runner, where it works."
+      "why": "Replaced, not dropped as a step: the tests still run, through `dotnet vstest` on the built assemblies. Two roles independently reported `dotnet test --no-build` exiting 0 while discovering and running nothing in their containers — no console output, no trx even with an explicit --logger, no file from --diag. It works in this container under every variation tried (see the episode), so the difference is in the role container and not visible from here. The shape of that failure is what matters: a gate that reads only an exit code reports green over zero tests. `dotnet vstest` skips `dotnet test`'s project evaluation entirely and is the one form both roles confirmed working there, and the command asserts a positive result count and the absence of any failed outcome on top of it. CI keeps running `dotnet test`; it is checked on a GitHub runner, where it works."
     },
     {
       "from": ".github/workflows/ci.yml",
-      "what": "dotnet format --verify-no-changes",
-      "why": "It is a lint gate, not a build or a test. `bsf gates static` runs the repo's own linters, and folding it into `test` would make a whitespace nit report as a failing test. The runbook carries the form that works — `dotnet restore && dotnet format --verify-no-changes --no-restore` — and the bare form from CI is not it; see the amendment's episode for why."
+      "what": "dotnet format --verify-no-changes as a build or test step",
+      "why": "It is a lint gate, not a build or a test, and folding it into `test` would make a whitespace nit report as a failing test. It is no longer merely dropped, though: this amendment carries it into the manifest as the `dotnet-format` static check, so `bsf gates static` runs it and counts its findings per rule per file. The bare form from CI is still not what runs — the check restores first and then passes --no-restore, which is the difference between it working and the CS0246 both roles hit."
     },
     {
       "from": "README.md",
       "what": "The bare `dotnet build` / `dotnet test` forms, without --no-restore / --no-build",
       "why": "Kept the staged forms instead so install, build and test are three separable steps the trial can attribute a failure to; the README's forms re-restore and re-build on every invocation."
+    },
+    {
+      "from": "setup, second amendment",
+      "what": "A second static check over the Roslyn analyzers' own SARIF, via `dotnet build -p:ErrorLog=<path>%2Cversion%3D2.1` per project",
+      "why": "Built and verified it works — SARIF 2.1.0 with correct rule ids, file URIs and lines; a scratch file in src/ produced IDE0161 and CA1062 — and then left it out for two reasons. First, it is redundant: `dotnet format` already reports CA and IDE diagnostics as well as whitespace, and it reaches tests/Readings.Tests, which the analyzer build does not because that project enables neither TreatWarningsAsErrors nor EnforceCodeStyleInBuild. Second, the gate merges counts across checks by rule id without namespacing them by tool, so running both would count the same IDE0161 in the same file twice. The signal it would add beyond the build is nil anyway: TreatWarningsAsErrors means any finding in src/ already fails the build, so its SARIF can only be non-empty on a PR that does not compile."
+    },
+    {
+      "from": "setup, second amendment",
+      "what": "The dotnet-coverage global tool as the coverage collector",
+      "why": "Built it first and it worked: `dotnet tool install --global dotnet-coverage --version 18.12.0` followed by `dotnet-coverage collect --output-format cobertura -- dotnet vstest ...` produced a report the gate's reader parsed, and it propagated a failing test run. Then api.nuget.org became unreachable from this container mid-episode and the install failed with 'Network is unreachable', which made the dependency obvious rather than theoretical: a coverage command that needs a registry fails in exactly the containers these amendment reports keep coming from. Replaced by the Code Coverage collector inside Microsoft.CodeCoverage, which Microsoft.NET.Test.Sdk already brings into the local cache, reached with --TestAdapterPath. Same engine, same Cobertura shape, no network, nothing installed, and nothing added to the repo. The whole pipeline was then re-run offline to prove it."
+    },
+    {
+      "from": "setup, second amendment",
+      "what": "Pinning the SDK with a global.json, as the verifier's report suggests",
+      "why": "It is a change to the repo, and setup changes only checker configuration. It is also unproven: the silent `dotnet test` was not reproduced here on any SDK, so pinning one would be a guess dressed as a fix, and it would freeze this repo to an SDK that will age. If someone wants it, it is a one-line product PR and the runbook's Traps table is the evidence for it — but the sandbox no longer needs it, because nothing it runs depends on `dotnet test`."
     }
   ],
   "capabilities": {
     "exercised": [
-      "dotnet restore and dotnet build with TreatWarningsAsErrors, EnforceCodeStyleInBuild and AnalysisLevel=latest-recommended, so any analyzer or code-style warning fails the build rather than scrolling past",
-      "the six xUnit tests in tests/Readings.Tests/ReadingStoreTests.cs, covering every public member of ReadingStore (TryAdd, For, MeanCelsius), run against the built assembly",
-      "that the test command cannot report green over zero tests: it writes a trx and then counts <UnitTestResult> elements, so a run that discovers nothing exits non-zero even if the runner exits 0",
-      "that the test command fails on a real regression: reverting MeanCelsius to return 0 instead of null for an empty window was caught (Failed: 1, exit 1), and reverted",
-      "the two decisions the repo says matter: MeanCelsius returning null and not 0 for an empty window, and TryAdd refusing a -127C reading instead of storing it",
-      "the HTTP surface in src/Readings/Program.cs end to end against a running app: POST /readings (202 accepted, 400 with the range message for -127), GET /sensors/{sensor}/readings (200, newest first), GET /sensors/{sensor}/mean (200 with the mean, 204 for an empty window)",
-      "dotnet format --verify-no-changes against .editorconfig over both projects, including the style half over tests/Readings.Tests — proven by a scratch file with a block-scoped namespace raising IDE0161 and a scratch file with bad whitespace raising WHITESPACE, both then deleted",
-      "a browser screenshot of GET /sensors/boiler/readings after the run command seeds three readings, so a change to the JSON shape is visible and not only asserted"
+      "dotnet restore and dotnet build with TreatWarningsAsErrors, EnforceCodeStyleInBuild and AnalysisLevel=latest-recommended, so any analyzer or code-style warning in src/Readings fails the build rather than scrolling past",
+      "the nine xUnit tests in tests/Readings.Tests/ReadingStoreTests.cs, covering every public member of ReadingStore (TryAdd, For, Latest, MeanCelsius), run against the built assembly",
+      "that the test command cannot report green over zero tests: it writes a trx, counts <UnitTestResult> elements and fails on zero, and separately fails when any result carries outcome=\"Failed\", so the verdict does not rest on the runner's exit code alone",
+      "that the test command finds a second test project without a manifest change: it globs tests/*/bin/Debug/net*/*.Tests.dll and fails when the glob matches nothing",
+      "that the test and coverage commands both fail on a real regression: reverting MeanCelsius to return 0 instead of null for an empty window gave Failed: 1 and exit 1 from each, and was reverted",
+      "line coverage of the whole solution, as Cobertura, from the same nine tests under the Code Coverage collector that ships inside Microsoft.CodeCoverage: 86.9% overall, parsed by the gate's own reader into four files — ReadingStore.cs 48/48, ReadingStoreTests.cs 120/120, Reading.cs 5/9, Program.cs 0/22",
+      "that coverage needs no network and no tool install: the collector comes from the local NuGet cache that `dotnet restore` already fills, found by globbing microsoft.codecoverage/*/build/netstandard2.0, and the whole pipeline was run start to finish with api.nuget.org unreachable",
+      "the three decisions the repo says matter: MeanCelsius returning null and not 0 for an empty window, TryAdd refusing a -127C reading instead of storing it, and Latest() omitting a sensor whose only reading was refused",
+      "the HTTP surface in src/Readings/Program.cs end to end against a running app: POST /readings (202 accepted, 400 with the range message for -127), GET /sensors/{sensor}/readings (200, newest first), GET /sensors/{sensor}/mean (200 with the mean, 204 for an empty window, 400 with no minutes), GET /sensors/latest (200, newest per sensor, ordered by sensor name)",
+      "dotnet format against .editorconfig over both projects, as a declared static check whose JSON report is converted to SARIF — proven to fire by a scratch file in tests/Readings.Tests that raised five WHITESPACE findings and one IDE0161 at the right lines, and proven clean on the current tree",
+      "that the static check reports a checker that did not run as unavailable rather than as a clean repo: with tests/Readings.Tests/obj/project.assets.json moved aside it reproduces the roles' CS0246 and emits 18 findings, and it writes no SARIF at all when dotnet format writes no report",
+      "a browser screenshot of GET /sensors/boiler/readings after the run command seeds two sensors, so a change to the JSON shape is visible and not only asserted"
     ],
     "not_exercised": [
       {
-        "what": "Whatever makes `dotnet test --no-build` silently find nothing in a role's agent container. The amendment routes around it; it did not reproduce it, so the cause is unknown and uncaught.",
+        "what": "Whatever makes `dotnet test --no-build` silently find nothing in a role's agent container. The sandbox routes around it; neither amendment reproduced it, so the cause is unknown and uncaught.",
         "paths": [
           "tests/Readings.Tests/Readings.Tests.csproj"
         ],
-        "why": "Both containers available here run `dotnet test --no-build` correctly (6 passed), including with XDG_RUNTIME_DIR set to a missing directory, with the test project's bin/ deleted, and with its obj/project.assets.json deleted. If the same condition reaches the sandbox, the test command still fails loudly rather than passing — but nothing here detects the condition itself, so a role that hits it sees a failing test gate and not an explanation."
+        "why": "This container runs `dotnet test --no-build` correctly (9 passed) with stdout redirected to a file, with TERM=dumb, with CI=true, under `env -i` with only the sandbox's six base variables, with XDG_RUNTIME_DIR pointing at a missing directory, and with the test project's obj/project.assets.json removed. Nothing here detects the condition itself, so a role that hits it sees a working test command and no explanation of why `dotnet test` disagrees."
+      },
+      {
+        "what": "The HTTP layer under the test command. Program.cs is declared `public partial class Program` specifically so a test project could host it, but tests/Readings.Tests references neither Microsoft.AspNetCore.Mvc.Testing nor WebApplicationFactory, so routing, model binding and JSON serialisation have no automated test.",
+        "paths": [
+          "src/Readings/Program.cs",
+          "tests/Readings.Tests/Readings.Tests.csproj"
+        ],
+        "why": "The trial reaches these paths over real HTTP and the screenshot shows the serialised shape, but a regression in them fails no test. Coverage now puts a number on it: 0 of 22 lines, the only file in the repo with no covered line. A PR that only touches Program.cs will measure 0% diff coverage against the 80% minimum, which is the gate telling the truth rather than a gate to work around."
+      },
+      {
+        "what": "Code style in tests/Readings.Tests under the build. That project sets neither TreatWarningsAsErrors nor EnforceCodeStyleInBuild, so the compiler is silent about style there.",
+        "paths": [
+          "tests/Readings.Tests/Readings.Tests.csproj"
+        ],
+        "why": "Only the dotnet-format static check covers it, and that check is the one most likely to be unavailable in a given container. If it is ever dropped, style in test code is enforced by nothing at all — which is why the check writes no SARIF rather than an empty one when it cannot run."
+      },
+      {
+        "what": "Concurrent writes. TryAdd takes a lock on the per-sensor list while it sorts, but For copies the same list with a collection expression without taking that lock, and Latest() reads through For.",
+        "paths": [
+          "src/Readings/ReadingStore.cs"
+        ],
+        "why": "Every test constructs its own store on one thread and the trial drives the API one curl at a time. A race between a sort under the lock and an unlocked copy would pass everything here."
       },
       {
         "what": "Anything that survives a restart. ReadingStore is a ConcurrentDictionary in process memory and the repo has no database, file store or migration, so state in the sandbox lasts exactly as long as the run command.",
@@ -97,34 +151,11 @@
         "why": "There is nothing to persist to. A change that introduced a store needs an amendment adding that service to the sandbox; nothing here would catch a persistence bug."
       },
       {
-        "what": "Concurrent writes. TryAdd takes a lock on the per-sensor list and the dictionary is concurrent, but no test and no trial step issues two overlapping requests.",
+        "what": "Branch coverage. The Cobertura report records line hits; the gate's reader counts only self-closing <line hits=\"N\"/> elements and derives a line percentage.",
         "paths": [
-          "src/Readings/ReadingStore.cs"
+          "tests/Readings.Tests/ReadingStoreTests.cs"
         ],
-        "why": "Every test constructs its own store on one thread and the trial drives the API one curl at a time. A race in the lock or sort would pass everything here."
-      },
-      {
-        "what": "The HTTP layer under the test command. Program.cs is declared `public partial class Program` specifically so a test project could host it, but tests/Readings.Tests references neither Microsoft.AspNetCore.Mvc.Testing nor WebApplicationFactory, so routing, model binding and JSON serialisation have no automated test.",
-        "paths": [
-          "src/Readings/Program.cs",
-          "tests/Readings.Tests/Readings.Tests.csproj"
-        ],
-        "why": "The trial reaches these paths over real HTTP and the screenshot shows the serialised shape, but a regression in them fails no test, so the test gate alone will not catch it."
-      },
-      {
-        "what": "Coverage measurement. No coverage collector is configured in either csproj, and .factory/guardrails/coverage.json has high_pct and floor_pct at 0.",
-        "paths": [
-          "tests/Readings.Tests/Readings.Tests.csproj",
-          ".factory/guardrails/coverage.json"
-        ],
-        "why": "The test command emits no coverage data here, so the coverage half of gate 2 has nothing to read. Turning it on needs a collector package added to the test project."
-      },
-      {
-        "what": "A second test project. The test command names one assembly path explicitly.",
-        "paths": [
-          "tests/"
-        ],
-        "why": "`dotnet vstest` takes assembly paths, not a solution, so a new test project under tests/ runs nowhere until the test command names it too. That is a manifest amendment, and until it happens the new project's tests pass silently by not existing to the gate. The count guard does not help: the one named assembly still reports its own results."
+        "why": "dotnet-coverage emits branch data, but nothing in the gates reads it, so a test that executes a conditional without covering both of its outcomes measures as covered."
       },
       {
         "what": "HTTPS, authentication and authorisation.",
@@ -158,7 +189,7 @@
       "attempt": 4,
       "tried": "The trial's own control: ran `dotnet build --no-restore` and `dotnet test --no-build` in an empty temporary directory with the same environment.",
       "observed": "Both exit 1 with MSBUILD error MSB1003 (no project or solution file). They depend on this repo's code, so the control step will pass.",
-      "changed": "Nothing."
+      "changed": null
     },
     {
       "attempt": 5,
@@ -219,10 +250,95 @@
       "tried": "trial of round 1: install, build, test, control, run",
       "observed": "reached renders, as claimed",
       "changed": null
+    },
+    {
+      "attempt": 15,
+      "tried": "Second amendment opens here, with two reports on work item wi_01M7YHSHX0QVJT6NMABZHQTT36: the builder's 9ee7d48caa306084, already answered by the first amendment, and the verifier's 68041b41bb3232c8, which is new. Read both and compared them against the frozen manifest. The verifier describes the same two failures as the builder — a silent `dotnet test` and `dotnet format` failing with CS0246 — plus the detail that its container resolves SDK 11.0.100 with 10.0.303 and 10.0.404 also installed, and the suggestion to pin an SDK with a global.json.",
+      "observed": "One shortfall in two voices, and both halves of it already have an answer in the frozen manifest or the runbook. But only half of that answer is enforceable: commands.test is in the manifest and runs, while the lint command exists only as prose in the runbook, so nothing makes a role or a gate use the form that works. The verifier's report is evidence of exactly that — it ran the bare CI form and hit CS0246 again.",
+      "changed": "Set the goal for this round: make the lint command a thing the factory runs rather than a thing it documents, and close the two gaps the frozen manifest had listed under not_exercised — no coverage measurement, and a test command that names one assembly so a second test project would run nowhere."
+    },
+    {
+      "attempt": 16,
+      "tried": "Before changing anything, tried again to reproduce the silent `dotnet test`, since a cause would beat a workaround. Ran `dotnet test --no-build` with stdout redirected to a file (no tty), with TERM=dumb, with CI=true, and under `env -i` with only PATH, HOME and TMPDIR.",
+      "observed": "All four ran the nine tests and passed, 529-587 bytes of output each. Added to the first amendment's five variations, that is nine conditions tried and none reproducing. The container here is the same SDK (11.0.100) and the same VSTest (18.12.0) the verifier names.",
+      "changed": "Nothing. Recorded it as the one open item, in the runbook's Traps table and under capabilities.not_exercised, and declined to pin an SDK with a global.json on a hypothesis — it is a repo change, setup does not make them, and nothing the sandbox runs depends on `dotnet test` any more."
+    },
+    {
+      "attempt": 17,
+      "tried": "Read the runner to find out what a static check and a coverage report must actually produce, rather than guessing from the brief: schema/sandbox.json for the fields, and bsf.mjs for countSarif, runSarifCheck, readCoverage, fromCoberturaish, measuredCounts and gatesTests.",
+      "observed": "Four things that changed the design. The SARIF reader needs locations[0].physicalLocation and iterates every run, so several runs in one file are fine and a result with no location is skipped. The Cobertura reader counts only self-closing <line hits=\"N\"/> inside <class filename=\"...\">. measuredCounts merges counts across checks by rule id without namespacing them by tool, so two checks reporting the same rule double-count it. And gatesTests runs `build && coverage` in place of the test command, with the closed environment, in the same job that later reads the coverage report — so an absolute /tmp path for the report is safe and keeps the working tree clean.",
+      "changed": "Decided on one static check rather than two, and on /tmp rather than repo-relative paths for both the SARIF and the Cobertura report."
+    },
+    {
+      "attempt": 18,
+      "tried": "Built the analyzer-SARIF option anyway, to measure what it would add: `dotnet build <project> --no-restore --no-incremental -p:ErrorLog=<path>%2Cversion%3D2.1`, once per project, merged with `jq -s`. Checked it against a scratch file in src/Readings with a block-scoped namespace and an unchecked public string parameter.",
+      "observed": "It works — SARIF 2.1.0, two results, IDE0161 at line 1 and CA1062 at line 5, correct file URIs. Three things argued against keeping it. The comma in -p:ErrorLog must be written %2C or MSBuild silently writes SARIF 1.0.0, which the gate's reader cannot use — an easy way to ship a check that counts nothing. $(MSBuildProjectName) does not expand in a command-line property, so each project needs its own invocation and a cascading CS0006 appears when the first one fails. And with TreatWarningsAsErrors on, its results can only ever be non-empty on a PR that does not compile, which the build already catches.",
+      "changed": "Dropped it, with the reasoning recorded under dropped. The deciding fact was scope: tests/Readings.Tests sets neither TreatWarningsAsErrors nor EnforceCodeStyleInBuild, so the analyzer build says nothing about style in test code — the gap the builder originally could not check — while dotnet format covers both projects."
+    },
+    {
+      "attempt": 19,
+      "tried": "Made dotnet format the static check. It writes JSON, not SARIF, so `dotnet format --verify-no-changes --no-restore --report <dir>` writes format-report.json and a jq filter maps each FileChange to a SARIF result with its DiagnosticId, FilePath, LineNumber and CharNumber. Tested with a scratch file in tests/Readings.Tests carrying both a block-scoped namespace and mangled whitespace, then with the scratch file deleted.",
+      "observed": "With the scratch file: exit 2, six results — five WHITESPACE at line 5 and one IDE0161 at line 1, all in tests/Readings.Tests/ScratchGuard.cs. Clean tree: exit 0, a valid SARIF with an empty results array. Earlier, with scratch files in both projects, the same check also reported CA1062 and IDE0161 from src/Readings, which is the overlap that ruled out running the analyzer check beside it.",
+      "changed": "Added it as static_checks[0], name dotnet-format, writing /tmp/bsf-format/dotnet-format.sarif."
+    },
+    {
+      "attempt": 20,
+      "tried": "Checked the one way this check could do real harm: reporting a clean repo when it had not run. Moved tests/Readings.Tests/obj/project.assets.json aside — the state that reproduces the roles' CS0246 — and ran the check.",
+      "observed": "Reproduced the report exactly, exit 2, and dotnet format still wrote a report: 18 findings, all CS0246. So the broken state is loud rather than silently clean. Then confirmed the recovery: `dotnet restore` followed by `dotnet format --verify-no-changes --no-restore` exits 0, both with the file moved back and with it deleted so restore has to recreate it.",
+      "changed": "Put `dotnet restore` at the front of the check command and kept --no-restore after it. Deliberately did not write an empty format-report.json as a fallback: when dotnet format writes no report the command writes no SARIF, so runSarifCheck reports the check unavailable with the error text instead of counting zero findings. A fabricated empty report is the exact failure this amendment exists to fix."
+    },
+    {
+      "attempt": 21,
+      "tried": "Coverage, without changing the repo. Neither csproj references a collector, so tried the one that ships with Microsoft.NET.Test.Sdk first — `dotnet vstest ... --collect:\"Code Coverage;Format=Cobertura\"` — and then the dotnet-coverage global tool.",
+      "observed": "The bare --collect form does not find the collector: 'Unable to find a datacollector with friendly name Code Coverage', printed as a warning while the run still passed and exited 0 — another silently-no-op shape. The global tool works: install, then `dotnet-coverage collect --output-format cobertura -- dotnet vstest <dll>` writes Cobertura with absolute filenames and self-closing <line hits=.../> elements, and it propagates a failing test run (checked with the MeanCelsius regression, exit 1). Reimplemented the gate's fromCoberturaish regexes in node over the output: four files, 88.5% of lines.",
+      "changed": "Added commands.coverage and coverage_report on the global tool, with the install behind `|| true` so a registry hiccup would cost coverage rather than the whole sandbox."
+    },
+    {
+      "attempt": 22,
+      "tried": "A cold-start run to be sure nothing depended on state built up during the episode: uninstalled the global tool, deleted every bin/ and obj/ and every report directory, then ran install, build, test, control, coverage and the static check again.",
+      "observed": "install exited 0 but printed 'Unhandled exception: Network is unreachable (api.nuget.org:443)' — the tool install had failed, and the `|| true` had hidden it exactly as designed. `dotnet restore` still succeeded, because the packages were already in the local NuGet cache. Coverage then failed, exit 1. The network had been reachable an hour earlier in the same container, so this was not a permanent property of the environment — which is the point: a coverage command that needs a registry fails intermittently, in exactly the containers these reports keep coming from.",
+      "changed": "Went back to the collector that is already on disk. Microsoft.NET.Test.Sdk 17.12.0 brings Microsoft.CodeCoverage into ~/.nuget/packages, and standalone vstest finds its collector when pointed at it: `CC=$(ls -d \"$HOME\"/.nuget/packages/microsoft.codecoverage/*/build/netstandard2.0 | tail -1)` then `--TestAdapterPath:\"$CC\" --collect:\"Code Coverage;Format=Cobertura\"`. The glob is version-agnostic so bumping the test SDK does not silently turn coverage off, and `[ -n \"$CC\" ]` fails the command if it ever matches nothing. Dropped dotnet-coverage and the two DOTNET_COVERAGE_* variables with it."
+    },
+    {
+      "attempt": 23,
+      "tried": "Checked the replacement produces the same thing. Ran the new coverage command with api.nuget.org still unreachable and parsed its output with the gate's own regexes again. The collector writes to a generated filename under a GUID directory, so the command copies it to the fixed path coverage_report declares.",
+      "observed": "Four files and 86.9% of lines — ReadingStore.cs 48/48, ReadingStoreTests.cs 120/120, Reading.cs 5/9, Program.cs 0 of 22. The small difference from the global tool's 88.5% is Reading.cs: this collector counts the record's generated members, which is the more honest number. vstest is now the top-level process, so a failing test is its own exit code rather than something a wrapper has to forward. One new warning appeared and was fixed: VSTest refuses to save session artifacts into a directory other users can read, so the test and coverage commands now chmod the artifacts directory to 700.",
+      "changed": "The copy is `cp \"$(find <dir> -name '*.cobertura.xml' | head -1)\" /tmp/bsf-coverage/cobertura.xml`, after an `rm -rf` of the directory. No cobertura file means the cp fails and the command exits non-zero, rather than the gate reading last run's report as this one's."
+    },
+    {
+      "attempt": 24,
+      "tried": "Stated the consequence of measuring coverage at all, rather than leaving it in the numbers.",
+      "observed": "diff_min_pct in .factory/guardrails/coverage.json is 80, and Program.cs has no covered line. A PR that only adds or changes a route will measure 0% diff coverage and fail gate 2.",
+      "changed": "Nothing in the manifest — that is the gate telling the truth. Wrote it into the runbook and capabilities together with the way through it: Microsoft.AspNetCore.Mvc.Testing and WebApplicationFactory<Program>, which Program.cs is already shaped for and which fundamentals.md now names as the one package that would clearly earn its place."
+    },
+    {
+      "attempt": 25,
+      "tried": "Closed the two remaining gaps in the test command. Replaced the single named assembly with `A=$(ls tests/*/bin/Debug/net*/*.Tests.dll) && [ -n \"$A\" ]`, and added a second assertion on the trx: `! grep -q 'outcome=\"Failed\"'` after the `grep -c`.",
+      "observed": "On the current tree the glob matches one assembly and the command prints 9. In an empty directory the ls fails and the chain exits non-zero, so the trial's control step still passes. Against the trx left by the failing run, the two guards together print 9 and exit 1 — so a runner that exited 0 over a failed test would still be caught, which the count alone does not do. A clean trx carries one outcome=\"Completed\" and nine outcome=\"Passed\", and no Failed.",
+      "changed": "Both guards are now in the test command and in the coverage command, since the tests gate runs the coverage one in its place."
+    },
+    {
+      "attempt": 26,
+      "tried": "Ran the whole manifest the way the trial does, with every report directory deleted first and with api.nuget.org still unreachable: install, build, test, the control pair in an empty temporary directory, coverage, then the static check — each under `env -i` with PATH, HOME, TMPDIR, LANG, CI and this manifest's five variables and nothing else.",
+      "observed": "install 0; build 0 with 0 warnings and 0 errors; test 0, nine passed, printed 9, and no VSTEST_ARTIFACTS_DIRECTORY warning now that the variable is set and the directory is 700; control build exit 1 with MSB1003 and control test exit 2 from the empty glob, so the control step passes; coverage 0, nine passed, Cobertura written to the declared path and parsed into four files at 86.9%; static check 0 with a valid SARIF carrying an empty results array.",
+      "changed": "Nothing. This is the run the tier claim rests on."
+    },
+    {
+      "attempt": 27,
+      "tried": "The run command, with the seed extended from three boiler readings to three boiler and two attic ones so GET /sensors/latest has more than one sensor to order. Started it under the closed environment, drove every route with curl, then opened app_url in Chromium through playwright-cli and took a full-page screenshot.",
+      "observed": "Listening on 127.0.0.1:5080. /sensors/boiler/readings returns the three seeded readings newest first; /sensors/latest returns attic then boiler, newest per sensor, ordered by name; mean over 60 minutes is 20; a -127 POST is 400 with the range message; an unknown sensor's mean is 204. The screenshot shows the readings JSON, and the only console entry is a 404 for /favicon.ico, which a JSON API does not serve.",
+      "changed": "Tier stays renders and app_url stays http://127.0.0.1:5080/sensors/boiler/readings — it shows three readings where /sensors/latest shows one per sensor, so a change to the list shape is more visible there. Closed the browser, stopped the app, confirmed nothing is listening on 5080 and the working tree is clean apart from the .gitignore edit and .claude/ that were already there when this round started."
+    },
+    {
+      "attempt": 28,
+      "tried": "trial of round 1: install, build, test, control, run",
+      "observed": "reached renders, as claimed",
+      "changed": null
     }
   ],
   "amended_by": [
-    "9ee7d48caa306084"
+    "9ee7d48caa306084",
+    "68041b41bb3232c8"
   ],
-  "frozen_at": "2026-11-21T08:43:45.032Z"
+  "frozen_at": "2026-11-21T16:22:56.271Z"
 }
