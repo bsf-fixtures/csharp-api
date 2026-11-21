@@ -1,0 +1,13 @@
+{
+  "role": "builder",
+  "needs": "The manifest's test command and the runbook's lint command, runnable from the builder's agent container. `dotnet test --no-build` exits 0 but discovers and runs nothing here — no console output, no trx even with an explicit --logger, no file from --diag, and `-v n` shows the VSTest target completing in 0.63s. `dotnet format --verify-no-changes` exits 2 with CS0246 'FactAttribute could not be found' for every [Fact] in tests/Readings.Tests.",
+  "paths": [
+    "tests/Readings.Tests/Readings.Tests.csproj",
+    "tests/Readings.Tests/ReadingStoreTests.cs",
+    ".factory/sandbox/manifest.json"
+  ],
+  "why": "Both are pre-existing in this container, not caused by this change: I confirmed the dotnet format failure on a clean tree via git stash, and the dotnet test silence predates the edit. The SDK here is 11.0.100 and VSTest 18.12.0, which warns 'VSTEST_ARTIFACTS_DIRECTORY environment variable was not found ... most likely caused by an outdated Microsoft.NET.Test.Sdk package reference' (the project pins 17.12.0) — so the agent container's dotnet test appears to silently no-op rather than fail, which is the dangerous shape: a gate reading only its exit code would report green on zero tests. The manifest's setup episode recorded both commands passing on the runner, so this looks like the same class as the recorded XDG_RUNTIME_DIR trap — an agent-container-only difference. I worked around it for my own checking without touching the sandbox or the manifest: `dotnet vstest tests/Readings.Tests/bin/Debug/net9.0/Readings.Tests.dll` ran 9 passed / 0 failed, `dotnet build --no-restore` gave 0 warnings 0 errors under TreatWarningsAsErrors, `dotnet format src/Readings/Readings.csproj --verify-no-changes` and `dotnet format whitespace tests/Readings.Tests/Readings.Tests.csproj --verify-no-changes` both exited 0, and I drove every acceptance check over real HTTP against the running app on 127.0.0.1:5080. What I could not run here is the style half of dotnet format over the test project.",
+  "work_item": "wi_01M7YHSHX0QVJT6NMABZHQTT36",
+  "reported_at": "2026-11-21T08:22:11.603Z",
+  "reports": 1
+}
