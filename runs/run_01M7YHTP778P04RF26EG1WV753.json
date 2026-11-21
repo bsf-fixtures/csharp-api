@@ -10,7 +10,7 @@
   "started_at": "2026-11-21T07:58:41.383Z",
   "ended_at": "2026-11-21T08:38:38.728Z",
   "duration_sec": 2397,
-  "outcome": "draft_pr",
+  "outcome": "merged",
   "pr": 17,
   "steps": [
     {
