@@ -5,7 +5,7 @@
   "commands": {
     "install": "dotnet restore",
     "build": "dotnet build --no-restore",
-    "test": "dotnet test --no-build",
+    "test": "mkdir -p \"${VSTEST_ARTIFACTS_DIRECTORY:-/tmp/vstest-artifacts}\" \"${TMPDIR:-/tmp}/readings-test-results\" && rm -f \"${TMPDIR:-/tmp}/readings-test-results/results.trx\" && dotnet vstest tests/Readings.Tests/bin/Debug/net9.0/Readings.Tests.dll --ResultsDirectory:\"${TMPDIR:-/tmp}/readings-test-results\" --logger:\"trx;LogFileName=results.trx\" --logger:\"console;verbosity=normal\" && grep -c \"<UnitTestResult \" \"${TMPDIR:-/tmp}/readings-test-results/results.trx\"",
     "run": "(until curl -sf -o /dev/null http://127.0.0.1:5080/sensors/boiler/readings; do sleep 1; done; for s in 25:18.5 15:20.0 5:21.5; do curl -sS -X POST http://127.0.0.1:5080/readings -H 'Content-Type: application/json' -d \"{\\\"sensor\\\":\\\"boiler\\\",\\\"at\\\":\\\"$(date -u -d \"-${s%%:*} minutes\" +%Y-%m-%dT%H:%M:%SZ)\\\",\\\"celsius\\\":${s##*:}}\" >/dev/null; done) & exec dotnet run --project src/Readings/Readings.csproj --no-build",
     "seed": "for s in 25:18.5 15:20.0 5:21.5; do curl -sS -X POST \"$ASPNETCORE_URLS/readings\" -H 'Content-Type: application/json' -d \"{\\\"sensor\\\":\\\"boiler\\\",\\\"at\\\":\\\"$(date -u -d \"-${s%%:*} minutes\" +%Y-%m-%dT%H:%M:%SZ)\\\",\\\"celsius\\\":${s##*:}}\"; echo; done"
   },
@@ -34,6 +34,12 @@
       "kind": "self",
       "value": "1",
       "why": "Suppresses the SDK first-run banner so the tail of a failing build is the failure rather than the welcome message."
+    },
+    {
+      "name": "VSTEST_ARTIFACTS_DIRECTORY",
+      "kind": "self",
+      "value": "/tmp/vstest-artifacts",
+      "why": "Added by the amendment. VSTest 18.12.0 (the version in SDK 11) prints 'VSTEST_ARTIFACTS_DIRECTORY environment variable was not found, falling back to a user-private temporary directory. This is most likely caused by an outdated Microsoft.NET.Test.Sdk package reference' on every run here, because the test project pins Microsoft.NET.Test.Sdk 17.12.0. The warning is the last line of test output and it sent the builder looking at the package version rather than at its own container. Naming the directory removes the fallback and the warning; the test command creates it first, because VSTest does not. Toolchain configuration, in the same class as DOTNET_NOLOGO — nothing in src/ or tests/ reads it."
     }
   ],
   "services": [],
@@ -50,8 +56,13 @@
     },
     {
       "from": ".github/workflows/ci.yml",
+      "what": "dotnet test --no-build as the sandbox's test command",
+      "why": "Replaced by the amendment, not dropped as a step: the tests still run, through `dotnet vstest` on the built assembly. The builder reported `dotnet test --no-build` exiting 0 while discovering and running nothing in its agent container — no console output, no trx, no --diag file. It works in both containers checked here (6 passed), so the difference is in the role container and not visible from either of them. The shape of that failure is what matters: a gate that reads only an exit code reports green over zero tests. `dotnet vstest` skips `dotnet test`'s project evaluation entirely and is the one form the builder confirmed working there, and the command asserts a positive result count on top. CI keeps running `dotnet test`; it is checked on a GitHub runner, where it works."
+    },
+    {
+      "from": ".github/workflows/ci.yml",
       "what": "dotnet format --verify-no-changes",
-      "why": "It is a lint gate, not a build or a test. `bsf gates static` runs the repo's own linters, and folding it into `test` would make a whitespace nit report as a failing test. It is recorded in the runbook and it passes here."
+      "why": "It is a lint gate, not a build or a test. `bsf gates static` runs the repo's own linters, and folding it into `test` would make a whitespace nit report as a failing test. The runbook carries the form that works — `dotnet restore && dotnet format --verify-no-changes --no-restore` — and the bare form from CI is not it; see the amendment's episode for why."
     },
     {
       "from": "README.md",
@@ -62,13 +73,22 @@
   "capabilities": {
     "exercised": [
       "dotnet restore and dotnet build with TreatWarningsAsErrors, EnforceCodeStyleInBuild and AnalysisLevel=latest-recommended, so any analyzer or code-style warning fails the build rather than scrolling past",
-      "the six xUnit tests in tests/Readings.Tests/ReadingStoreTests.cs, covering every public member of ReadingStore (TryAdd, For, MeanCelsius)",
+      "the six xUnit tests in tests/Readings.Tests/ReadingStoreTests.cs, covering every public member of ReadingStore (TryAdd, For, MeanCelsius), run against the built assembly",
+      "that the test command cannot report green over zero tests: it writes a trx and then counts <UnitTestResult> elements, so a run that discovers nothing exits non-zero even if the runner exits 0",
+      "that the test command fails on a real regression: reverting MeanCelsius to return 0 instead of null for an empty window was caught (Failed: 1, exit 1), and reverted",
       "the two decisions the repo says matter: MeanCelsius returning null and not 0 for an empty window, and TryAdd refusing a -127C reading instead of storing it",
-      "the HTTP surface in src/Readings/Program.cs end to end against a running app: POST /readings (202 accepted, 400 with the range message for -127), GET /sensors/{sensor}/readings (200, newest first), GET /sensors/{sensor}/mean (200 with the mean, 204 for an empty window, 400 when ?minutes is absent)",
-      "dotnet format --verify-no-changes against .editorconfig",
+      "the HTTP surface in src/Readings/Program.cs end to end against a running app: POST /readings (202 accepted, 400 with the range message for -127), GET /sensors/{sensor}/readings (200, newest first), GET /sensors/{sensor}/mean (200 with the mean, 204 for an empty window)",
+      "dotnet format --verify-no-changes against .editorconfig over both projects, including the style half over tests/Readings.Tests — proven by a scratch file with a block-scoped namespace raising IDE0161 and a scratch file with bad whitespace raising WHITESPACE, both then deleted",
       "a browser screenshot of GET /sensors/boiler/readings after the run command seeds three readings, so a change to the JSON shape is visible and not only asserted"
     ],
     "not_exercised": [
+      {
+        "what": "Whatever makes `dotnet test --no-build` silently find nothing in a role's agent container. The amendment routes around it; it did not reproduce it, so the cause is unknown and uncaught.",
+        "paths": [
+          "tests/Readings.Tests/Readings.Tests.csproj"
+        ],
+        "why": "Both containers available here run `dotnet test --no-build` correctly (6 passed), including with XDG_RUNTIME_DIR set to a missing directory, with the test project's bin/ deleted, and with its obj/project.assets.json deleted. If the same condition reaches the sandbox, the test command still fails loudly rather than passing — but nothing here detects the condition itself, so a role that hits it sees a failing test gate and not an explanation."
+      },
       {
         "what": "Anything that survives a restart. ReadingStore is a ConcurrentDictionary in process memory and the repo has no database, file store or migration, so state in the sandbox lasts exactly as long as the run command.",
         "paths": [
@@ -84,7 +104,7 @@
         "why": "Every test constructs its own store on one thread and the trial drives the API one curl at a time. A race in the lock or sort would pass everything here."
       },
       {
-        "what": "The HTTP layer under `dotnet test`. Program.cs is declared `public partial class Program` specifically so a test project could host it, but tests/Readings.Tests references neither Microsoft.AspNetCore.Mvc.Testing nor WebApplicationFactory, so routing, model binding and JSON serialisation have no automated test.",
+        "what": "The HTTP layer under the test command. Program.cs is declared `public partial class Program` specifically so a test project could host it, but tests/Readings.Tests references neither Microsoft.AspNetCore.Mvc.Testing nor WebApplicationFactory, so routing, model binding and JSON serialisation have no automated test.",
         "paths": [
           "src/Readings/Program.cs",
           "tests/Readings.Tests/Readings.Tests.csproj"
@@ -97,7 +117,14 @@
           "tests/Readings.Tests/Readings.Tests.csproj",
           ".factory/guardrails/coverage.json"
         ],
-        "why": "`dotnet test` emits no coverage data here, so the coverage half of gate 2 has nothing to read. Turning it on needs a collector package added to the test project."
+        "why": "The test command emits no coverage data here, so the coverage half of gate 2 has nothing to read. Turning it on needs a collector package added to the test project."
+      },
+      {
+        "what": "A second test project. The test command names one assembly path explicitly.",
+        "paths": [
+          "tests/"
+        ],
+        "why": "`dotnet vstest` takes assembly paths, not a solution, so a new test project under tests/ runs nowhere until the test command names it too. That is a manifest amendment, and until it happens the new project's tests pass silently by not existing to the gate. The count guard does not help: the one named assembly still reports its own results."
       },
       {
         "what": "HTTPS, authentication and authorisation.",
@@ -150,7 +177,52 @@
       "tried": "trial of round 1: install, build, test, control, run",
       "observed": "reached renders, as claimed",
       "changed": null
+    },
+    {
+      "attempt": 8,
+      "tried": "Amendment 9ee7d48caa306084 opens here. The builder reported two commands unusable from its agent container: `dotnet test --no-build` exits 0 having run nothing, and `dotnet format --verify-no-changes` exits 2 with CS0246 'FactAttribute could not be found'. First step was to reproduce both, with XDG_RUNTIME_DIR unset, on the tree as committed.",
+      "observed": "Neither reproduced. `dotnet test --no-build` ran 6 tests and passed; `dotnet format --verify-no-changes` exited 0. Same SDK the builder named, 11.0.100, and the same VSTest 18.12.0. The only common ground with the report was the trailing warning: 'VSTEST_ARTIFACTS_DIRECTORY environment variable was not found, falling back to a user-private temporary directory. This is most likely caused by an outdated Microsoft.NET.Test.Sdk package reference in the test project.'",
+      "changed": "Nothing yet. A report that does not reproduce is still a report; the question became what state produces those two shapes."
+    },
+    {
+      "attempt": 9,
+      "tried": "Pushed the environment at the failure instead of guessing: ran `dotnet test --no-build` with XDG_RUNTIME_DIR set to the missing /run/user/1001, with TMPDIR set to a missing directory, with HOME set to a missing directory, and with tests/Readings.Tests/bin deleted.",
+      "observed": "XDG_RUNTIME_DIR made no difference (6 passed). TMPDIR missing crashed MSBuild with a stack trace, exit 82. HOME missing crashed the CLI's first-run configurer, exit 1. bin/ deleted gave 'The argument ...Readings.Tests.dll is invalid', exit 1. Every one of them fails loudly. None produces the silent exit 0 the builder saw.",
+      "changed": "Nothing. Ruled out the environment variables the sandbox could plausibly be getting wrong, which is what left 'route around it' as the answer for the test command rather than 'fix the cause'."
+    },
+    {
+      "attempt": 10,
+      "tried": "The format failure, which is the more tractable half. Moved tests/Readings.Tests/obj/project.assets.json aside — leaving bin/ intact — and ran `dotnet format --verify-no-changes --no-restore`.",
+      "observed": "Reproduced exactly: 'error CS0246: The type or namespace name FactAttribute could not be found', once per [Fact], exit 2. Restoring the file put it back to exit 0. The asymmetry in the builder's report is explained by the same thing: src/Readings has zero PackageReference entries, so it resolves with no assets at all, while tests/Readings.Tests cannot find xunit without them. `dotnet test --no-build` in the same broken state still ran all 6 tests — so bad restore state breaks format and not test, and the two failures the builder saw have different causes.",
+      "changed": "Made the lint command restore explicitly before formatting, and then forbid format's own implicit restore: `dotnet restore && dotnet format --verify-no-changes --no-restore`. The restore guarantees the assets the workspace load needs; --no-restore stops a second, differently-configured restore from running inside format, which is the only thing in that command that touches the network. Recorded in the runbook, which is where the lint command lives — the manifest schema has no field for it."
+    },
+    {
+      "attempt": 11,
+      "tried": "Checked the new lint command is a real check and not decoration, in both halves and both projects. Wrote src/Readings/Scratch.cs with mangled whitespace, ran it, deleted the file; wrote tests/Readings.Tests/Scratch.cs with a block-scoped namespace — the style half the builder could not run, since `dotnet format whitespace` skips it — ran it, deleted the file.",
+      "observed": "The whitespace scratch raised seven WHITESPACE errors against Readings.csproj, exit 2. The namespace scratch raised 'warning IDE0161: Convert to file-scoped namespace' against Readings.Tests.csproj, exit 2 — .editorconfig's csharp_style_namespace_declarations = file_scoped:warning, enforced over the test project. With both files deleted, exit 0.",
+      "changed": "Nothing. The command covers what the builder had to leave unchecked."
+    },
+    {
+      "attempt": 12,
+      "tried": "The test command. The builder's one working data point was `dotnet vstest` on the built assembly, so built the command on that, and added a guard for the shape it warned about — a gate reading only an exit code reporting green over zero tests. Verified `dotnet vstest` against a dll with no tests and against a missing dll.",
+      "observed": "`dotnet vstest` on the app's own Readings.dll aborts the run, exit 1; on a path that does not exist it says the source file was not found, exit 1. Neither is silently green, so the runner itself is already honest — the guard is for the case where it is not. Writing a trx with --ResultsDirectory and --logger:trx and then counting <UnitTestResult> elements with `grep -c` prints the number of tests that ran (6) and exits 1 when that number is zero.",
+      "changed": "Set commands.test to that: mkdir the artifacts and results directories, delete any stale trx, run vstest with a console and a trx logger, then `grep -c`. Added VSTEST_ARTIFACTS_DIRECTORY to env, because the fallback it warns about is a user-private temp directory that may not exist in a role container, and because the warning's own suggestion — that Microsoft.NET.Test.Sdk is outdated — is what sent the builder down the wrong path."
+    },
+    {
+      "attempt": 13,
+      "tried": "Proved the new test command fails when it should. Changed MeanCelsius to return 0 instead of null for an empty window — the exact regression the README says a change could quietly reverse — rebuilt, ran the test command, then reverted with git checkout and rebuilt. Also ran `grep -c` against a trx containing no results, ran the command twice in a row to check the stale-trx deletion, and ran it in an empty directory as the trial's control does.",
+      "observed": "With the regression: 'Test Run Failed', 5 passed 1 failed, exit 1. The guard on an empty trx: prints 0, exit 1. Twice in a row: 6 both times, no accumulation and no results_1.trx. Empty directory: 'The test source file ... was not found', exit 1, so the control step passes. After reverting, the whole pipeline under `env -i` with the trial's six base variables plus this manifest's five: restore 0, build 0 warnings 0 errors, test 6 passed printing 6, lint 0.",
+      "changed": "Nothing further. Re-ran the run command end to end afterwards and opened app_url in Chromium: the page shows the three seeded readings newest first, the only console entry a 404 for /favicon.ico, which a JSON API does not serve. Tier stays renders. Browser closed, app stopped, nothing listening on 5080, working tree clean."
+    },
+    {
+      "attempt": 14,
+      "tried": "trial of round 1: install, build, test, control, run",
+      "observed": "reached renders, as claimed",
+      "changed": null
     }
   ],
-  "frozen_at": "2026-11-21T05:39:11.053Z"
+  "amended_by": [
+    "9ee7d48caa306084"
+  ],
+  "frozen_at": "2026-11-21T08:43:45.032Z"
 }
