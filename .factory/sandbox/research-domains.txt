@@ -4,24 +4,32 @@
 # Everything here is justified by a file in the repo. Nothing is listed
 # "just in case" — a host nobody needs is a host the spec role can be led to.
 #
-# Unchanged by amendment 9ee7d48caa306084: the amendment changed how the
-# tests and the formatter are invoked, not what the app is built from, and
-# every tool it touched (dotnet test, dotnet vstest, dotnet format, VSTest's
-# loggers and VSTEST_ARTIFACTS_DIRECTORY) is documented under
-# learn.microsoft.com, which was already here.
+# Unchanged in substance by either amendment. Both changed how the tests,
+# the formatter and now the coverage collector are invoked, not what the app
+# is built from. Every tool they touched — dotnet test, dotnet vstest,
+# dotnet format, the Code Coverage data collector in Microsoft.CodeCoverage,
+# VSTest's loggers, adapter paths and environment variables, and the
+# Cobertura output format — is documented under learn.microsoft.com, which
+# was already here. jq and the SARIF schema are used by the sandbox's static
+# check, not by the app, so they are deliberately not listed: the spec role
+# researches the product's stack.
 
 # ASP.NET Core minimal APIs (Program.cs: WebApplication.CreateBuilder,
 # MapPost/MapGet, Results.Accepted/BadRequest/Ok/NoContent), the .NET
-# base library (ConcurrentDictionary, DateTimeOffset, System.Text.Json),
-# the dotnet CLI (restore/build/test/vstest/run/format), VSTest's own
-# options and environment variables, the CA analyzer rules that
-# TreatWarningsAsErrors makes fatal, and the .editorconfig options
-# EnforceCodeStyleInBuild checks.
+# base library (ConcurrentDictionary, DateTimeOffset, StringComparer,
+# System.Text.Json), the dotnet CLI (restore/build/test/vstest/run/format),
+# VSTest's own options and environment variables, the Code Coverage data
+# collector, the CA analyzer rules that TreatWarningsAsErrors makes fatal,
+# and the
+# .editorconfig options EnforceCodeStyleInBuild checks. Also
+# WebApplicationFactory and Microsoft.AspNetCore.Mvc.Testing, which is the
+# documented way to close this repo's one real test gap: Program.cs has no
+# automated test and 0 of 22 lines covered.
 learn.microsoft.com
 
 # .NET release and support information: the repo targets net9.0 with no
 # global.json, so which SDK builds it is a real question — and it is where
-# both of the amendment's reported failures came from.
+# every toolchain surprise reported here has started.
 dotnet.microsoft.com
 
 # xUnit 2.9.2 and xunit.runner.visualstudio 2.8.2 — the only test
@@ -35,5 +43,6 @@ xunit.net
 www.nuget.org
 
 # The .editorconfig file format itself, which is this repo's single source
-# of style (root = true, file-scoped namespaces, CA1062 severity).
+# of style (root = true, file-scoped namespaces, CA1062 severity) and the
+# only thing that governs style in tests/, where the build does not.
 editorconfig.org
