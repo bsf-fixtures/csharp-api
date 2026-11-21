@@ -12,6 +12,7 @@ public sealed class ReadingStore
     /// carry on, which would hide a failing sensor.</summary>
     public bool TryAdd(Reading reading)
     {
+        ArgumentNullException.ThrowIfNull(reading);
         if (!reading.IsPlausible)
         {
             return false;
