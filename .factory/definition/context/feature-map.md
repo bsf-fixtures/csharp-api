@@ -5,34 +5,74 @@
   Every agent reads this first. The question it has to answer is "where would
   this change go?" — so it names folders and what each one owns, not what the
   product does.
-
-  {{PLACEHOLDERS}} are filled in by setup.
 -->
 
-# Feature map — {{REPO_NAME}}
+# Feature map — csharp-api
 
-{{ONE_LINE_WHAT_THIS_REPO_IS}}
+A minimal ASP.NET Core service that accepts temperature readings from named
+sensors, refuses implausible ones, and reports a mean over a time window —
+two projects, six source files, everything in memory.
 
 ## Feature folders
 
 | Folder | Owns | Depends on |
 | --- | --- | --- |
-{{FEATURE_FOLDER_ROWS}}
+| `src/Readings` | The whole service. `Program.cs` is the HTTP surface (three minimal-API routes mapped inline, no controllers); `Reading.cs` is the domain record and the plausible range; `ReadingStore.cs` is the in-memory store and the mean-over-a-window calculation. | Nothing in this repo. `Microsoft.NET.Sdk.Web` only — the project declares no `PackageReference` at all. |
+| `tests/Readings.Tests` | The xUnit tests. One file, `ReadingStoreTests.cs`, six `[Fact]`s against `ReadingStore`. | `src/Readings` by `ProjectReference`; `xunit`, `xunit.runner.visualstudio`, `Microsoft.NET.Test.Sdk`. |
+
+There is one feature. The table is short because the repo is, not because
+anything was left out.
 
 ## Shared
 
 | Folder | What it is | Rule |
 | --- | --- | --- |
-{{SHARED_FOLDER_ROWS}}
+| — | No shared project exists. | Nothing is shared yet, so there is no rule in force. The first thing two features both need is what creates this folder. |
+
+Repo-wide settings that are not a folder, but behave like shared code
+because every project inherits them:
+
+| File | What it is | Rule |
+| --- | --- | --- |
+| `.editorconfig` | Formatting and the severity of `CA1062` (null-argument checks), set to `warning`. `root = true`, so nothing above it applies. | A style change goes here, not into a csproj. `dotnet format --verify-no-changes` is what enforces it. |
+| `Readings.sln` | Lists both projects with fixed GUIDs. | A new project is not built or tested until it is added here — `dotnet build` and `dotnet test` resolve the solution from the repo root. |
+| `src/Readings/Readings.csproj` | `TargetFramework net9.0`, `Nullable enable`, `ImplicitUsings enable`, `TreatWarningsAsErrors`, `EnforceCodeStyleInBuild`, `AnalysisLevel latest-recommended`. | There is no `Directory.Build.props`, so each new project repeats these properties itself or silently gets weaker checks. |
 
 ## Where things go
 
-- **A new feature** gets its own folder under {{FEATURE_ROOT}}.
-- **Something used by two features** moves to {{SHARED_ROOT}}, and not before
-  the second use. One caller is not a shared concern.
+- **A new feature** gets its own project folder under `src/`, and a line in
+  `Readings.sln`. Its tests get a matching project under `tests/`, named
+  `<Project>.Tests`, referencing it by relative `ProjectReference`.
+- **Something used by two features** moves to a new shared project under
+  `src/`, and not before the second use. One caller is not a shared concern.
 - **Nothing in a feature folder imports from another feature folder.** Where
   two features need the same thing, it belongs in shared.
+- **A new HTTP route** goes in `src/Readings/Program.cs` alongside the others
+  as a `app.Map*` call. There is no controller, no router file and no
+  endpoint-registration extension method to follow.
 
 ## Not in this repo
 
-{{OUT_OF_SCOPE}}
+- **No persistence.** `ReadingStore` is a `ConcurrentDictionary` in process
+  memory. There is no database, no ORM, no migration, no file store, and no
+  connection string anywhere in the repo.
+- **No configuration.** There is no `appsettings.json`, no
+  `Properties/launchSettings.json`, no `global.json`, no
+  `Directory.Build.props` and no `nuget.config`. Nothing in `src/` or
+  `tests/` reads an environment variable or an `IConfiguration` value; the
+  only environment the app has is ASP.NET Core's own host configuration
+  (`ASPNETCORE_URLS`, `ASPNETCORE_ENVIRONMENT`).
+- **No client, UI or static assets.** The service answers JSON. A browser
+  pointed at it sees raw JSON, and `GET /` is a 404 — there is no root route.
+- **No authentication, authorisation, HTTPS, CORS, rate limiting or health
+  endpoint.** None are configured in `Program.cs`.
+- **No logging or observability code of its own.** It uses the default host
+  logger and never calls it; `ReadingStore` deliberately does not log, which
+  `ReadingStore.cs` says in a doc comment.
+- **No containerisation or deployment config.** No Dockerfile, no compose
+  file, no devcontainer, no Helm chart, no deploy workflow. The only workflow
+  that touches the app is `.github/workflows/ci.yml`; every other workflow in
+  `.github/workflows` belongs to the factory, not to the service.
+- **No HTTP-level tests.** `Program.cs` ends with `public partial class
+  Program;` so a test project could host the app, but no test project
+  references `Microsoft.AspNetCore.Mvc.Testing` and no such test exists.

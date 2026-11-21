@@ -1,0 +1,156 @@
+{
+  "schema": "sandbox/1",
+  "tier": "renders",
+  "tier_reason": null,
+  "commands": {
+    "install": "dotnet restore",
+    "build": "dotnet build --no-restore",
+    "test": "dotnet test --no-build",
+    "run": "(until curl -sf -o /dev/null http://127.0.0.1:5080/sensors/boiler/readings; do sleep 1; done; for s in 25:18.5 15:20.0 5:21.5; do curl -sS -X POST http://127.0.0.1:5080/readings -H 'Content-Type: application/json' -d \"{\\\"sensor\\\":\\\"boiler\\\",\\\"at\\\":\\\"$(date -u -d \"-${s%%:*} minutes\" +%Y-%m-%dT%H:%M:%SZ)\\\",\\\"celsius\\\":${s##*:}}\" >/dev/null; done) & exec dotnet run --project src/Readings/Readings.csproj --no-build",
+    "seed": "for s in 25:18.5 15:20.0 5:21.5; do curl -sS -X POST \"$ASPNETCORE_URLS/readings\" -H 'Content-Type: application/json' -d \"{\\\"sensor\\\":\\\"boiler\\\",\\\"at\\\":\\\"$(date -u -d \"-${s%%:*} minutes\" +%Y-%m-%dT%H:%M:%SZ)\\\",\\\"celsius\\\":${s##*:}}\"; echo; done"
+  },
+  "app_url": "http://127.0.0.1:5080/sensors/boiler/readings",
+  "env": [
+    {
+      "name": "ASPNETCORE_URLS",
+      "kind": "self",
+      "value": "http://127.0.0.1:5080",
+      "why": "The address Kestrel binds. src/Readings/Program.cs calls WebApplication.CreateBuilder(args) and there is no Properties/launchSettings.json, so without this the host falls back to its built-in default (:5000) and nothing would be listening where app_url points. This is the app's own real origin inside the sandbox, not a placeholder."
+    },
+    {
+      "name": "ASPNETCORE_ENVIRONMENT",
+      "kind": "self",
+      "value": "Development",
+      "why": "Selects the host environment. Development keeps the developer exception page and per-request logging on, so a verifier reading the run log sees which endpoint failed and why instead of a bare 500. No code branches on it; the host does."
+    },
+    {
+      "name": "DOTNET_CLI_TELEMETRY_OPTOUT",
+      "kind": "self",
+      "value": "1",
+      "why": "The .NET SDK's first run posts usage telemetry. The sandbox should not make a network call the repo never asked for."
+    },
+    {
+      "name": "DOTNET_NOLOGO",
+      "kind": "self",
+      "value": "1",
+      "why": "Suppresses the SDK first-run banner so the tail of a failing build is the failure rather than the welcome message."
+    }
+  ],
+  "services": [],
+  "egress": [
+    "api.nuget.org",
+    "globalcdn.nuget.org"
+  ],
+  "stubs": [],
+  "dropped": [
+    {
+      "from": ".github/workflows/ci.yml",
+      "what": "actions/setup-dotnet@v4 with dotnet-version: \"9.0.x\"",
+      "why": "That step provisions an SDK on a bare runner; it is CI plumbing, not something the app needs installed. The trial runner already ships .NET SDKs, and a newer SDK builds this repo's net9.0 target fine — verified here against SDK 11.0.100, which produced 0 warnings with TreatWarningsAsErrors on."
+    },
+    {
+      "from": ".github/workflows/ci.yml",
+      "what": "dotnet format --verify-no-changes",
+      "why": "It is a lint gate, not a build or a test. `bsf gates static` runs the repo's own linters, and folding it into `test` would make a whitespace nit report as a failing test. It is recorded in the runbook and it passes here."
+    },
+    {
+      "from": "README.md",
+      "what": "The bare `dotnet build` / `dotnet test` forms, without --no-restore / --no-build",
+      "why": "Kept the staged forms instead so install, build and test are three separable steps the trial can attribute a failure to; the README's forms re-restore and re-build on every invocation."
+    }
+  ],
+  "capabilities": {
+    "exercised": [
+      "dotnet restore and dotnet build with TreatWarningsAsErrors, EnforceCodeStyleInBuild and AnalysisLevel=latest-recommended, so any analyzer or code-style warning fails the build rather than scrolling past",
+      "the six xUnit tests in tests/Readings.Tests/ReadingStoreTests.cs, covering every public member of ReadingStore (TryAdd, For, MeanCelsius)",
+      "the two decisions the repo says matter: MeanCelsius returning null and not 0 for an empty window, and TryAdd refusing a -127C reading instead of storing it",
+      "the HTTP surface in src/Readings/Program.cs end to end against a running app: POST /readings (202 accepted, 400 with the range message for -127), GET /sensors/{sensor}/readings (200, newest first), GET /sensors/{sensor}/mean (200 with the mean, 204 for an empty window, 400 when ?minutes is absent)",
+      "dotnet format --verify-no-changes against .editorconfig",
+      "a browser screenshot of GET /sensors/boiler/readings after the run command seeds three readings, so a change to the JSON shape is visible and not only asserted"
+    ],
+    "not_exercised": [
+      {
+        "what": "Anything that survives a restart. ReadingStore is a ConcurrentDictionary in process memory and the repo has no database, file store or migration, so state in the sandbox lasts exactly as long as the run command.",
+        "paths": [
+          "src/Readings/ReadingStore.cs"
+        ],
+        "why": "There is nothing to persist to. A change that introduced a store needs an amendment adding that service to the sandbox; nothing here would catch a persistence bug."
+      },
+      {
+        "what": "Concurrent writes. TryAdd takes a lock on the per-sensor list and the dictionary is concurrent, but no test and no trial step issues two overlapping requests.",
+        "paths": [
+          "src/Readings/ReadingStore.cs"
+        ],
+        "why": "Every test constructs its own store on one thread and the trial drives the API one curl at a time. A race in the lock or sort would pass everything here."
+      },
+      {
+        "what": "The HTTP layer under `dotnet test`. Program.cs is declared `public partial class Program` specifically so a test project could host it, but tests/Readings.Tests references neither Microsoft.AspNetCore.Mvc.Testing nor WebApplicationFactory, so routing, model binding and JSON serialisation have no automated test.",
+        "paths": [
+          "src/Readings/Program.cs",
+          "tests/Readings.Tests/Readings.Tests.csproj"
+        ],
+        "why": "The trial reaches these paths over real HTTP and the screenshot shows the serialised shape, but a regression in them fails no test, so the test gate alone will not catch it."
+      },
+      {
+        "what": "Coverage measurement. No coverage collector is configured in either csproj, and .factory/guardrails/coverage.json has high_pct and floor_pct at 0.",
+        "paths": [
+          "tests/Readings.Tests/Readings.Tests.csproj",
+          ".factory/guardrails/coverage.json"
+        ],
+        "why": "`dotnet test` emits no coverage data here, so the coverage half of gate 2 has nothing to read. Turning it on needs a collector package added to the test project."
+      },
+      {
+        "what": "HTTPS, authentication and authorisation.",
+        "paths": [
+          "src/Readings/Program.cs"
+        ],
+        "why": "None are configured anywhere in the repo. ASPNETCORE_URLS is http on loopback, so there is no TLS path and no identity to assert against."
+      }
+    ]
+  },
+  "episode": [
+    {
+      "attempt": 1,
+      "tried": "Read Readings.sln, both csproj files, Program.cs, Reading.cs, ReadingStore.cs, .editorconfig, README.md and .github/workflows/ci.yml, then grepped src and tests for GetEnvironmentVariable, Configuration[, IOptions, appsettings and launchSettings.",
+      "observed": "net9.0 web SDK plus an xUnit test project; TreatWarningsAsErrors, EnforceCodeStyleInBuild and AnalysisLevel=latest-recommended are all on. No appsettings.json, no launchSettings.json, no global.json, no Dockerfile, no compose file, no devcontainer, and not one read of configuration in the code. The only environment the app has is ASP.NET Core's own host configuration.",
+      "changed": "Wrote the env list as four `self` variables and nothing else: there is no third party to stub and no backing service to run, so `services` and `stubs` are empty as a fact about the repo rather than an omission."
+    },
+    {
+      "attempt": 2,
+      "tried": "dotnet restore in this agent container.",
+      "observed": "Crashed before restoring: System.IO.DirectoryNotFoundException on '/run/user/1001' inside NuGet's MigrationRunner. This container exports XDG_RUNTIME_DIR=/run/user/1001 but /run/user does not exist, and the directory cannot be created without root.",
+      "changed": "Nothing in the manifest, deliberately. `bsf sandbox trial` builds its environment from PATH, HOME, TMPDIR, LANG, CI and RUNNER_TEMP plus the manifest's own list, so XDG_RUNTIME_DIR is absent on the runner and this cannot happen there. Re-ran every later command with it unset, and under `env -i` with exactly the trial's six base variables, to be sure the fix was the environment and not a lucky inherit."
+    },
+    {
+      "attempt": 3,
+      "tried": "Deleted every bin/ and obj/, then ran install, build and test under `env -i` with only the six variables the trial passes plus the four in this manifest.",
+      "observed": "dotnet restore 0; dotnet build --no-restore 0 with 0 warnings and 0 errors against SDK 11.0.100 (the newest of the twelve installed), so the strict warning settings do not trip on a newer analyzer set; dotnet test --no-build 0, 6 passed, 0 failed. dotnet format --verify-no-changes also exits 0.",
+      "changed": "Settled on the staged commands rather than the README's bare forms, so a failure lands on one step."
+    },
+    {
+      "attempt": 4,
+      "tried": "The trial's own control: ran `dotnet build --no-restore` and `dotnet test --no-build` in an empty temporary directory with the same environment.",
+      "observed": "Both exit 1 with MSBUILD error MSB1003 (no project or solution file). They depend on this repo's code, so the control step will pass.",
+      "changed": "Nothing."
+    },
+    {
+      "attempt": 5,
+      "tried": "Started the app with ASPNETCORE_URLS=http://127.0.0.1:5080 and `dotnet run --project src/Readings/Readings.csproj --no-build`, then drove every route with curl.",
+      "observed": "Listening on 127.0.0.1:5080. POST /readings 202; POST with celsius -127 returns 400 and {\"error\":\"-127C is outside the plausible range\"}; GET /sensors/boiler/readings returns the list newest first; GET /sensors/boiler/mean?minutes=60 returns the mean; the same for an unknown sensor returns 204; omitting ?minutes returns 400. GET / is 404 — there is no root route, which is why app_url points at the readings list rather than /.",
+      "changed": "Set app_url to http://127.0.0.1:5080/sensors/boiler/readings. A 404 at / would still have counted as answered by the trial's <500 check, and claiming `renders` on a blank error page would have been a lie about what a person sees."
+    },
+    {
+      "attempt": 6,
+      "tried": "Put a readiness loop and three seeding POSTs in front of the server in the run command, then opened the app in Chromium through playwright-cli and took a full-page screenshot — the same thing the trial does with `npx playwright screenshot`.",
+      "observed": "The page shows the three seeded readings as JSON, newest first, each with its timestamp and celsius. The seeder runs in a background subshell and the server is `exec`ed, so the process the trial spawns is the server itself and its SIGTERM to the process group reaches both. If the seeding ever fails the page still returns 200 with [], so a broken seed costs the data in the screenshot, not the tier.",
+      "changed": "Claimed tier renders. Closed the browser and stopped the app; no process is left listening on 5080."
+    },
+    {
+      "attempt": 7,
+      "tried": "trial of round 1: install, build, test, control, run",
+      "observed": "reached renders, as claimed",
+      "changed": null
+    }
+  ],
+  "frozen_at": "2026-11-21T05:39:11.053Z"
+}
