@@ -1,0 +1,148 @@
+{
+  "schema": "sandbox/1",
+  "tier": "static",
+  "tier_reason": "The repository contains no application. Its default branch holds README.md, the factory definition under .factory/, and the factory's own gh-aw workflows under .github/workflows/ — 56 tracked files, none of them source. There is no .csproj, .sln, Directory.Build.props, global.json, NuGet.Config, Dockerfile, compose file, devcontainer or non-factory CI workflow, and no .cs file anywhere. With no project file, `dotnet restore`, `dotnet build` and `dotnet test` all exit 1 with MSB1003 (\"Specify a project or solution file\"), so there is no install, build, test or run command that can honestly be declared, and nothing to start or screenshot. The repository is named csharp-api and is intended to hold one, but the API does not exist yet: build_and_test and renders are unreachable until a project lands.",
+  "commands": {
+    "install": null,
+    "build": null,
+    "run": null,
+    "test": null,
+    "seed": null
+  },
+  "app_url": null,
+  "env": [],
+  "services": [],
+  "egress": [],
+  "stubs": [],
+  "dropped": [
+    {
+      "from": ".github/workflows/factory-*.yml and .github/workflows/factory-role-*.lock.yml",
+      "what": "The 29 gh-aw workflows that run the factory itself: intake, run, gates, policy, merge, garden, review, setup, trial, and the seven compiled role workflows.",
+      "why": "They are the factory's own machinery, not the application's build. They install the bsf runner and drive agents; none of them restores, compiles, tests or starts an application, because there is no application for them to act on. Treating them as the repo's CI would put factory bootstrap steps on the app's build path."
+    },
+    {
+      "from": ".github/workflows/factory-role-builder.lock.yml (awf-config.json network.allowDomains)",
+      "what": "The agent firewall's package-registry allowlist, which already includes every .NET host a restore needs: api.nuget.org, nuget.org, dist.nuget.org, azuresearch-usnc.nuget.org, azuresearch-ussc.nuget.org, nugetregistryv2prod.blob.core.windows.net, nuget.pkg.github.com, dotnet.microsoft.com, builds.dotnet.microsoft.com, dotnetcli.blob.core.windows.net, dot.net and ci.dot.net.",
+      "why": "Not copied into egress. The schema scopes egress to hosts needed beyond the package registries, and these are package registries that the compiled role workflows already permit. Duplicating them here would imply the sandbox asked for extra reach it does not need — and this sandbox runs no command at all, so it currently needs none."
+    }
+  ],
+  "capabilities": {
+    "exercised": [
+      "Static review of a diff: reading every tracked file, and checking Markdown, YAML and JSON by inspection.",
+      "Validating the factory's own JSON against the schemas in the bsf runner (.factory/guardrails/*.json, .factory/sandbox/manifest.json) and its YAML definition under .factory/definition/.",
+      "Confirming the .NET SDK is on PATH and usable, which is what a future build will need: `dotnet --list-sdks` reports 8.0.x, 9.0.x, 10.0.x and 11.0.100, with ASP.NET Core runtimes 8.0 through 11.0."
+    ],
+    "not_exercised": [
+      {
+        "what": "Compiling any C# code.",
+        "paths": [
+          "**/*.cs",
+          "**/*.csproj",
+          "**/*.sln",
+          "**/*.slnx",
+          "**/Directory.Build.props",
+          "**/Directory.Packages.props",
+          "global.json",
+          "NuGet.Config"
+        ],
+        "why": "No project or solution file exists, so there is nothing for MSBuild to load; `dotnet build` exits 1 with MSB1003. The first change that adds one makes this sandbox inadequate and should open an amendment episode."
+      },
+      {
+        "what": "Running automated tests, and therefore any coverage measurement.",
+        "paths": [
+          "**/*Tests*/**",
+          "**/*Test*/**",
+          "**/*.Tests.csproj",
+          "**/*.Test.csproj"
+        ],
+        "why": "No test project and no test runner package. .factory/guardrails/coverage.json is correspondingly zeroed (high_pct 0, floor_pct 0), so there is no coverage history to compare a change against."
+      },
+      {
+        "what": "Starting the API and seeing it answer a request.",
+        "paths": [
+          "**/Program.cs",
+          "**/Startup.cs",
+          "**/appsettings*.json",
+          "**/Properties/launchSettings.json",
+          "**/Controllers/**",
+          "**/Endpoints/**"
+        ],
+        "why": "There is no host, no entry point and no listening port, so app_url is null and the trial has nothing to request. This is what holds the tier at static rather than renders."
+      },
+      {
+        "what": "Browser verification: rendering a page, clicking through a flow, or taking a screenshot.",
+        "paths": [
+          "**/wwwroot/**",
+          "**/*.cshtml",
+          "**/*.razor"
+        ],
+        "why": "Nothing serves HTTP in this sandbox. The verifier role's browser and devtools tools have no target."
+      },
+      {
+        "what": "Anything reached over a connection: a database, a cache, object storage, mail, or a third-party API.",
+        "paths": [
+          "**/appsettings*.json",
+          "**/*DbContext*.cs",
+          "**/Migrations/**",
+          "**/Infrastructure/**"
+        ],
+        "why": "No code reads configuration, so there is no connection string, no client and no credential to point anywhere. services, env and stubs are all empty as a result — not because the dependencies were skipped, but because none exist yet to depend on."
+      },
+      {
+        "what": "Linting and analyzer baselines.",
+        "paths": [
+          "**/.editorconfig",
+          "**/*.ruleset",
+          "**/*.globalconfig"
+        ],
+        "why": "No linter, formatter or analyzer configuration is present, and .factory/guardrails/baselines.json carries an empty rules object. `bsf gates static` has no rule counts to compare, so the static gate is vacuous until a change introduces an analyzer or .editorconfig."
+      },
+      {
+        "what": "Database migrations and any other command that writes persistent state.",
+        "paths": [
+          "**/Migrations/**"
+        ],
+        "why": "commands.seed is null because there is no schema, no seed script and no store to write to. Nothing in this sandbox outlives the process."
+      }
+    ]
+  },
+  "episode": [
+    {
+      "attempt": 1,
+      "tried": "Read the repository for how it installs, builds, tests and runs: looked for a project or package manifest of any ecosystem (*.csproj, *.sln, global.json, NuGet.Config, Directory.Build.props, package.json, pyproject.toml, go.mod, Cargo.toml, Gemfile, pom.xml), for a README beyond the one-line description, and for a Dockerfile, compose file, devcontainer or non-factory CI workflow.",
+      "observed": "`git ls-files` returns 56 paths: README.md, 23 files under .factory/ (the bsf runner, the role and rubric definitions, the four context templates, three zeroed guardrail files) and 29 factory workflows under .github/workflows/. No manifest of any ecosystem, no source file, no container or deploy config. README.md is two lines: the repo name and \"Build Software Factory: Fixture of a C# API to install factory on\".",
+      "changed": "Stopped looking for a build to describe and started checking whether the application was simply missing from this checkout."
+    },
+    {
+      "attempt": 2,
+      "tried": "Checked that the empty tree was not an artifact of a sparse or shallow checkout: listed the default branch's root through the GitHub API rather than the working copy, and listed the repository's branches.",
+      "observed": "The default branch root holds exactly .factory, .github and README.md (79 bytes). Four branches exist — main, factory/bootstrap, upgrade-e29d8e0, upgrade-factory — all of them factory branches; main is the default. The working copy is complete. The repository is genuinely greenfield: the C# API its name promises has not been written.",
+      "changed": "Settled that the sandbox has no application to configure, and that env, services and stubs are empty because nothing exists to depend on — not because dependencies were left out."
+    },
+    {
+      "attempt": 3,
+      "tried": "Checked the toolchain anyway, so the manifest records what a future build will find, and tested whether any plausible .NET command could be declared: ran `dotnet --list-sdks`, `dotnet --list-runtimes`, then `dotnet restore`, `dotnet build` and `dotnet test` in a clean empty directory.",
+      "observed": "The SDK is present and healthy: /usr/bin/dotnet, default 11.0.100, with 8.0.x, 9.0.x, 10.0.x and 11.0.x SDKs and ASP.NET Core runtimes 8.0 through 11.0 installed. All three commands exit 1 with `MSBUILD : error MSB1003: Specify a project or solution file.` (A first run also needed DOTNET_CLI_HOME and XDG_RUNTIME_DIR pointed at writable paths, a container quirk, not a repo one — MSB1003 is the real failure.)",
+      "changed": "Left all four commands null. Declaring `dotnet build` would fail the trial's build step; wrapping it so that it passes over zero projects would report build_and_test for a repo where nothing was compiled, which is the false signal the tier exists to prevent."
+    },
+    {
+      "attempt": 4,
+      "tried": "Considered whether the tier could be lifted by writing the missing API as part of setup, then claiming renders.",
+      "observed": "Setup's own brief says nothing written in the repo is kept — only the files under the design directory survive the round — and the trial checks out the repository at its own commit, so any project scaffolded here would be absent when the trial ran. The claim would measure static regardless, and it would also decide the repo's architecture without a work item or a human.",
+      "changed": "Nothing. Claimed static, and recorded under capabilities.not_exercised exactly which paths will make this sandbox inadequate, so the first pull request that adds a .csproj opens an amendment episode instead of being verified against a sandbox that cannot run it."
+    },
+    {
+      "attempt": 5,
+      "tried": "Validated the finished candidate with `bsf sandbox check --file /tmp/gh-aw/agent/bsf/setup/manifest.json`, and traced the runner's own reachedTier() to predict what the trial will measure.",
+      "observed": "The manifest validates. reachedTier() returns \"static\" when install, build and test all have a null command, which is this manifest exactly, so the measured tier will match the claim and the round will not be spent on a failed claim.",
+      "changed": "Nothing further."
+    },
+    {
+      "attempt": 6,
+      "tried": "trial of round 1: nothing to run",
+      "observed": "reached static, as claimed",
+      "changed": null
+    }
+  ],
+  "frozen_at": "2026-11-21T04:42:13.849Z"
+}

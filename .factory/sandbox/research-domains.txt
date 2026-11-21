@@ -1,0 +1,30 @@
+# Documentation hosts the spec role may read when it researches.
+# Added to network.allowed in .github/workflows/factory-role-spec.md by
+# `bsf recompile prepare`.
+#
+# This repository declares no dependencies: there is no project file, so no
+# NuGet package is referenced and no library's documentation can be named
+# from what the code uses. The hosts below are the platform documentation for
+# the only toolchain actually present on the runner — the .NET SDK, which
+# `dotnet --list-sdks` confirms (8.0.x through 11.0.100, with ASP.NET Core
+# runtimes 8.0-11.0). They are not a guess about which libraries this repo
+# will adopt.
+#
+# When a change adds packages, add that library's own documentation host here
+# and recompile; do not assume learn.microsoft.com covers a third-party
+# package.
+#
+# Package registries (api.nuget.org, nuget.org, dotnet.microsoft.com and the
+# rest of the dotnet ecosystem bundle) are already in every role workflow's
+# allowlist and are deliberately not repeated here.
+
+# .NET, C#, ASP.NET Core, EF Core and the dotnet CLI reference.
+learn.microsoft.com
+
+# Release notes, supported-version and end-of-life dates for each .NET
+# release — what a global.json pin has to be checked against.
+dotnet.microsoft.com
+
+# Package pages: a library's own documentation and repository links, and
+# which versions target which framework.
+www.nuget.org

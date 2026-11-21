@@ -6,33 +6,72 @@
   this change go?" — so it names folders and what each one owns, not what the
   product does.
 
-  {{PLACEHOLDERS}} are filled in by setup.
+  Setup found no application in this repository. The tables below are empty
+  because nothing fills them, not because setup skipped them. The first
+  pull request that adds a project is also the one that writes the first rows.
 -->
 
-# Feature map — {{REPO_NAME}}
+# Feature map — csharp-api
 
-{{ONE_LINE_WHAT_THIS_REPO_IS}}
+A C# API that has not been written yet. The default branch holds a two-line
+README, the factory's own definition under `.factory/`, and the factory's
+gh-aw workflows under `.github/workflows/` — 56 tracked files, none of them
+source. There is no `.csproj`, `.sln`, `global.json`, `Directory.Build.props`
+or `.cs` file anywhere on `main`.
 
 ## Feature folders
 
 | Folder | Owns | Depends on |
 | --- | --- | --- |
-{{FEATURE_FOLDER_ROWS}}
+
+None. There is no application code, so there are no feature folders and no
+import graph to read one from.
 
 ## Shared
 
 | Folder | What it is | Rule |
 | --- | --- | --- |
-{{SHARED_FOLDER_ROWS}}
+
+None.
+
+The only top-level folders that exist are infrastructure, and no feature may
+be put in either of them:
+
+| Folder | What it is | Rule |
+| --- | --- | --- |
+| `.factory/` | The factory itself: the vendored `bsf` runner (`bin/`), the role, rubric and context definitions (`definition/`), the lint and coverage guardrails (`guardrails/`), and after setup merges, the sandbox manifest (`sandbox/`). | Protected by `.factory/definition/policy.yaml`. `bin/`, `policy.yaml` and `sandbox/` need a trusted human's approval; `definition/**` only changes through the definition pipeline. Never application code. |
+| `.github/workflows/` | 29 gh-aw workflows that run the factory: intake, run, gates, policy, merge, garden, review, setup and trial, plus the seven compiled `factory-role-*` pairs (`.md` prompt, `.lock.yml` compiled output). | Protected in every pipeline, with no exclusion. A role's prompt and its lock file change together or not at all. Not the application's CI. |
 
 ## Where things go
 
-- **A new feature** gets its own folder under {{FEATURE_ROOT}}.
-- **Something used by two features** moves to {{SHARED_ROOT}}, and not before
-  the second use. One caller is not a shared concern.
+Nothing below is observed — none of it has been decided, because no code has
+been written. The first change that adds a project settles it, and the
+scheduled review rewrites this section from what that change actually did.
+
+- **A new feature** gets its own folder under a source root that does not
+  exist yet. No `src/`, `app/` or project directory is present to put one in.
+- **Something used by two features** moves to a shared root that does not
+  exist yet, and not before the second use. One caller is not a shared
+  concern.
 - **Nothing in a feature folder imports from another feature folder.** Where
-  two features need the same thing, it belongs in shared.
+  two features need the same thing, it belongs in shared. This rule holds
+  regardless of what the roots end up being called.
 
 ## Not in this repo
 
-{{OUT_OF_SCOPE}}
+- **The API.** Everything the name promises — a host, endpoints, models,
+  persistence, tests — is absent. Treat a work item that assumes any of it
+  exists as a request to create it.
+- **Any dependency.** No NuGet package is referenced, because there is no
+  project to reference one from. The lock-free `Directory.Packages.props`
+  and `NuGet.Config` that `policy.yaml` lists as protected files are names of
+  files that do not exist yet.
+- **Any build, lint or test configuration.** No `.editorconfig`, no analyzer
+  ruleset, no test project. `.factory/guardrails/baselines.json` holds an
+  empty rule set and `coverage.json` is zeroed, which is consistent: there is
+  nothing to measure.
+- **Any deployment or container configuration.** No Dockerfile, compose file,
+  devcontainer or deploy script. Nothing in the repository describes a
+  production environment.
+- **A second repository.** `factory.yaml` sets `data.location: same_repo` and
+  `data.repo: null`, so the factory's run records live here too.
