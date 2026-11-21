@@ -1,0 +1,13 @@
+{
+  "role": "verifier",
+  "needs": "A test command whose output can be read as evidence. The manifest's test command, `dotnet test --no-build`, exits 0 in the verifier container but prints nothing to stdout or stderr, writes no .trx even when passed `--logger \"trx;LogFileName=...\"`, and returns instantly. An exit code with no output cannot distinguish 'all tests passed' from 'no tests were discovered or run', so the test half of acceptance check 6 could not be read from the documented command. I got real evidence by invoking the built assembly directly: `dotnet vstest tests/Readings.Tests/bin/Debug/net9.0/Readings.Tests.dll` reported Failed: 0, Passed: 9, Skipped: 0, Total: 9, and `--ListTests` showed the six pre-existing facts plus the three new Latest* ones. Consider pinning the SDK with a global.json, or adding a collector/logger the runner honours, so `dotnet test` is self-evidencing.",
+  "paths": [
+    "tests/Readings.Tests/Readings.Tests.csproj",
+    ".factory/sandbox/manifest.json",
+    ".factory/definition/context/runbook.md"
+  ],
+  "why": "The container resolves SDK 11.0.100 (10.0.303 and 10.0.404 are also installed) and the repo has no global.json, so the newest SDK is selected and its `dotnet test` path produces no console output here. Separately, `dotnet format --verify-no-changes` — the lint gate the runbook records and the manifest deliberately drops from the sandbox — exits 2 in this container with CS0246 'Fact/FactAttribute could not be found' on every [Fact] in the test file. That is pre-existing and not caused by this change: a clean `git archive` of HEAD~1 restored into a scratch directory fails identically, flagging the six original facts. Both are SDK/workspace resolution issues in the verifier container, not defects in the code under review; `dotnet build --no-restore` succeeds with 0 warnings and 0 errors under TreatWarningsAsErrors, so xunit resolves correctly for the build itself.",
+  "work_item": "wi_01M7YHSHX0QVJT6NMABZHQTT36",
+  "reported_at": "2026-11-21T08:35:17.105Z",
+  "reports": 1
+}
