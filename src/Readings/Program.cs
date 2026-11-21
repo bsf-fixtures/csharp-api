@@ -19,6 +19,8 @@ app.MapGet("/sensors/{sensor}/mean", (string sensor, int minutes, ReadingStore s
     return mean is null ? Results.NoContent() : Results.Ok(new { sensor, minutes, mean });
 });
 
+app.MapGet("/sensors/latest", (ReadingStore store) => Results.Ok(store.Latest()));
+
 app.Run();
 
 /// <summary>Named so the test project can reference it.</summary>

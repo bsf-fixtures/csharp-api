@@ -7,7 +7,10 @@ public class ReadingStoreTests
     private static readonly DateTimeOffset Now = new(2026, 11, 20, 10, 0, 0, TimeSpan.Zero);
 
     private static Reading At(int minutesAgo, double celsius = 20) =>
-        new("boiler", Now.AddMinutes(-minutesAgo), celsius);
+        At("boiler", minutesAgo, celsius);
+
+    private static Reading At(string sensor, int minutesAgo, double celsius = 20) =>
+        new(sensor, Now.AddMinutes(-minutesAgo), celsius);
 
     [Fact]
     public void StoresAPlausibleReading()
@@ -43,6 +46,43 @@ public class ReadingStoreTests
         store.TryAdd(At(30));
         store.TryAdd(At(1));
         Assert.Equal(Now.AddMinutes(-1), store.For("boiler")[0].At);
+    }
+
+    [Fact]
+    public void LatestIsTheNewestReadingPerSensor()
+    {
+        var store = new ReadingStore();
+        store.TryAdd(At("boiler", 30, 18));
+        store.TryAdd(At("boiler", 2, 22));
+        store.TryAdd(At("attic", 10));
+
+        var latest = store.Latest();
+
+        Assert.Equal(2, latest.Count);
+        var boiler = Assert.Single(latest, r => r.Sensor == "boiler");
+        Assert.Equal(Now.AddMinutes(-2), boiler.At);
+        Assert.Equal(22, boiler.Celsius);
+    }
+
+    [Fact]
+    public void LatestIsOrderedBySensorName()
+    {
+        var store = new ReadingStore();
+        store.TryAdd(At("cellar", 1));
+        store.TryAdd(At("attic", 2));
+        store.TryAdd(At("boiler", 3));
+
+        Assert.Equal(["attic", "boiler", "cellar"], store.Latest().Select(r => r.Sensor));
+    }
+
+    [Fact]
+    public void LatestOmitsASensorWithNothingStored()
+    {
+        // A sensor whose only report was refused has no reading, so inventing
+        // an entry for it would report a failed sensor as a working one.
+        var store = new ReadingStore();
+        Assert.False(store.TryAdd(At("shed", 0, -127)));
+        Assert.Empty(store.Latest());
     }
 
     [Fact]

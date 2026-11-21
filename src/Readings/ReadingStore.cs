@@ -36,6 +36,17 @@ public sealed class ReadingStore
     public IReadOnlyList<Reading> For(string sensor) =>
         _bySensor.TryGetValue(sensor, out var list) ? [.. list] : [];
 
+    /// <summary>The newest reading for each sensor that has one, ordered by
+    /// sensor name. A sensor with nothing stored is left out rather than
+    /// given an empty entry: inventing one would report a sensor that has
+    /// never been heard from as a working one.</summary>
+    public IReadOnlyList<Reading> Latest() =>
+        [.. _bySensor.Keys
+            .Select(For)
+            .Where(readings => readings.Count > 0)
+            .Select(readings => readings[0])
+            .OrderBy(reading => reading.Sensor, StringComparer.Ordinal)];
+
     /// <summary>The mean over a window, or null when the window holds
     /// nothing. Null rather than zero: zero degrees is a temperature.</summary>
     public double? MeanCelsius(string sensor, TimeSpan window, DateTimeOffset now)
